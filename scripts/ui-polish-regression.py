@@ -515,11 +515,77 @@ def check_drawer(browser, evidence, ids):
         finish(context, errors, label)
 
 
+DIALOG_BOX = """(id) => {
+  const dialog = document.getElementById(id);
+  const head = dialog.querySelector(".dialog-head").getBoundingClientRect();
+  const body = dialog.querySelector(".dialog-body");
+  const style = getComputedStyle(body);
+  return {
+    headTop: head.top,
+    headHeight: head.height,
+    scrollHeight: body.scrollHeight,
+    clientHeight: body.clientHeight,
+    innerWidth: body.clientWidth - parseFloat(style.paddingLeft) -
+      parseFloat(style.paddingRight),
+  };
+}"""
+
+
+def check_dialogs(browser, evidence, ids):
+    for width, scheme in [(1280, "light"), (1280, "dark"), (390, "light"), (390, "dark")]:
+        label = f"dialogs {width} {scheme}"
+        context, page, errors = open_page(browser, width, scheme)
+
+        page.locator("#activityButton").click()
+        dialog = page.locator("#activityDialog")
+        expect(dialog).to_be_visible()
+        expect(dialog.locator(".dialog-head")).to_be_visible()
+        expect(page.locator("#boardActivity .activity-list")).to_be_visible()
+        before = page.evaluate(DIALOG_BOX, "activityDialog")
+        assert before["headHeight"] > 0, f"{label}: activity head {before}"
+        assert before["scrollHeight"] > before["clientHeight"], f"{label}: body {before}"
+        dialog.locator(".dialog-body").evaluate("e => { e.scrollTop = e.scrollHeight; }")
+        after = page.evaluate(DIALOG_BOX, "activityDialog")
+        assert abs(after["headTop"] - before["headTop"]) <= 1, f"{label}: head moved {after}"
+        dialog.locator(".dialog-body").evaluate("e => { e.scrollTop = 0; }")
+        dialog.screenshot(path=str(evidence / f"activity-{width}-{scheme}.png"), animations="disabled")
+        page.keyboard.press("Escape")
+        expect(dialog).not_to_be_visible()
+        expect(page.locator("#activityButton")).to_be_focused()
+
+        for kind, button in [("standup", "#standupButton"), ("weekly", "#weeklyButton")]:
+            page.locator(button).click()
+            dialog = page.locator("#reportDialog")
+            expect(dialog).to_be_visible()
+            page.locator("#runReport").click()
+            output = page.locator("#reportOutput")
+            expect(output).not_to_have_value("")
+            box = page.evaluate(DIALOG_BOX, "reportDialog")
+            assert output.bounding_box()["width"] >= box["innerWidth"] - 2, (
+                f"{label} {kind}: report output {output.bounding_box()} vs {box}"
+            )
+            colors = page.evaluate(
+                """() => [
+                  getComputedStyle(document.getElementById("reportOutput")).backgroundColor,
+                  getComputedStyle(document.getElementById("fLane")).backgroundColor,
+                ]"""
+            )
+            assert colors[0] == colors[1], f"{label} {kind}: output background {colors}"
+            copy, run = page.locator("#copyReport"), page.locator("#runReport")
+            assert abs(middle(copy) - middle(run)) <= 4, f"{label} {kind}: footer split"
+            dialog.screenshot(path=str(evidence / f"{kind}-{width}-{scheme}.png"), animations="disabled")
+            page.keyboard.press("Escape")
+            expect(dialog).not_to_be_visible()
+            expect(page.locator(button)).to_be_focused()
+        finish(context, errors, label)
+
+
 CHECKS = {
     "header_fit": check_header_fit,
     "project_dropdown": check_project_dropdown,
     "controls_style": check_controls_style,
     "drawer": check_drawer,
+    "dialogs": check_dialogs,
 }
 
 

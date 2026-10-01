@@ -1105,6 +1105,10 @@
           grid-column: 2 / 3;
           width: 100%;
         }
+        .activity-dialog {
+          width: calc(100% - 16px);
+          max-height: 92svh;
+        }
       }
       @media (prefers-reduced-motion: reduce) {
         *, *::before, *::after {
@@ -1160,16 +1164,62 @@
         border: 0;
       }
       .activity-dialog {
-        width: min(680px, calc(100% - 24px));
-        max-height: 85vh;
+        width: min(720px, calc(100% - 24px));
+        max-width: none;
+        max-height: min(85vh, 860px);
+        overflow: hidden;
         border: 1px solid var(--line);
         border-radius: 14px;
-        background: var(--surface);
+        background-color: var(--surface);
         color: var(--ink);
-        padding: 20px;
+        padding: 0;
+      }
+      .activity-dialog[open] {
+        display: flex;
+        flex-direction: column;
       }
       .activity-dialog::backdrop {
-        background: #0007;
+        background: rgba(5, 9, 15, 0.55);
+        backdrop-filter: blur(2px);
+      }
+      .dialog-head, .dialog-foot {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 18px;
+        border-bottom: 1px solid var(--line);
+      }
+      .dialog-head b {
+        font-size: 12px;
+        letter-spacing: 0.065em;
+        text-transform: uppercase;
+      }
+      .dialog-foot {
+        border-top: 1px solid var(--line);
+        border-bottom: 0;
+      }
+      .dialog-body {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        padding: 16px 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .dialog-body > * {
+        margin-block: 0;
+      }
+      .report-output {
+        width: 100%;
+        min-height: 280px;
+        padding: 9px 10px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background-color: var(--surface-2);
+        color: var(--ink);
+        font: 12px/1.55 var(--mono);
+        resize: vertical;
       }
       .incomplete {
         color: var(--danger);
@@ -1290,58 +1340,73 @@
       class="activity-dialog"
       aria-labelledby="activityTitle"
     >
-      <div class="drawer-head">
+      <div class="dialog-head">
         <b id="activityTitle">Board activity</b><span
           class="spacer"
-        ></span><button class="btn" id="closeActivity" type="button">
-          Close activity
+        ></span><button
+          class="btn"
+          id="closeActivity"
+          type="button"
+          aria-label="Close activity"
+        >
+          Close
         </button>
       </div>
-      <p class="hint">
-        Client labels are self-reported. History starts with this upgrade; the
-        latest 1,000 task changes are retained.
-      </p>
-      <div id="boardActivity" aria-live="polite"></div>
+      <div class="dialog-body">
+        <p class="hint">
+          Client labels are self-reported. History starts with this upgrade; the
+          latest 1,000 task changes are retained.
+        </p>
+        <div id="boardActivity" aria-live="polite"></div>
+      </div>
     </dialog>
     <dialog
       id="reportDialog"
       class="activity-dialog"
       aria-labelledby="reportTitle"
     >
-      <div class="drawer-head">
+      <div class="dialog-head">
         <b id="reportTitle">Generate report</b><span
           class="spacer"
-        ></span><button class="btn" id="closeReport" type="button">
+        ></span><button
+          class="btn"
+          id="closeReport"
+          type="button"
+          aria-label="Close report"
+        >
           Close
         </button>
       </div>
-      <div class="row">
-        <div class="field">
-          <label for="reportStart">Start date</label><input
-            id="reportStart"
-            type="date"
-          >
+      <div class="dialog-body">
+        <div class="row">
+          <div class="field">
+            <label for="reportStart">Start date</label><input
+              id="reportStart"
+              type="date"
+            >
+          </div>
+          <div class="field">
+            <label for="reportEnd">End date</label><input
+              id="reportEnd"
+              type="date"
+            >
+          </div>
         </div>
         <div class="field">
-          <label for="reportEnd">End date</label><input
-            id="reportEnd"
-            type="date"
+          <label for="reportProjects">Projects</label><input
+            id="reportProjects"
+            placeholder="All projects; or comma-separated project names"
           >
         </div>
+        <p id="reportMessage" class="hint" aria-live="polite"></p>
+        <textarea
+          id="reportOutput"
+          class="report-output"
+          rows="18"
+          aria-label="Editable generated report"
+        ></textarea>
       </div>
-      <div class="field">
-        <label for="reportProjects">Projects</label><input
-          id="reportProjects"
-          placeholder="All projects; or comma-separated project names"
-        >
-      </div>
-      <p id="reportMessage" class="hint"></p>
-      <textarea
-        id="reportOutput"
-        rows="18"
-        aria-label="Editable generated report"
-      ></textarea>
-      <div class="drawer-foot">
+      <div class="dialog-foot">
         <button class="btn primary" id="runReport" type="button">
           Generate
         </button><span class="spacer"></span><button
