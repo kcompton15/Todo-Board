@@ -19,6 +19,9 @@
         --accent-soft: #e8efff;
         --ring: rgba(35, 94, 216, 0.22);
         --danger: #c93e36;
+        --danger-soft: #fdecea;
+        --warn: #a35f00;
+        --warn-soft: #fff4e0;
         --ok: #168454;
         --shadow: 0 12px 34px rgba(20, 30, 46, 0.12);
         --radius: 14px;
@@ -48,6 +51,9 @@
           --accent-soft: #1b315b;
           --ring: rgba(112, 160, 255, 0.28);
           --danger: #f06b63;
+          --danger-soft: #3a1b1a;
+          --warn: #f0a640;
+          --warn-soft: #3a2a12;
           --ok: #4bcb89;
           --shadow: 0 16px 38px rgba(0, 0, 0, 0.34);
         }
@@ -65,6 +71,9 @@
         --accent-soft: #1b315b;
         --ring: rgba(112, 160, 255, 0.28);
         --danger: #f06b63;
+        --danger-soft: #3a1b1a;
+        --warn: #f0a640;
+        --warn-soft: #3a2a12;
         --ok: #4bcb89;
         --shadow: 0 16px 38px rgba(0, 0, 0, 0.34);
       }
@@ -858,6 +867,94 @@
       .field select {
         padding-right: 30px;
       }
+      .drawer-body h3 {
+        margin: 0 0 5px;
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 760;
+        letter-spacing: 0.065em;
+        text-transform: uppercase;
+      }
+      .stack {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .stack > * {
+        margin-top: 0;
+        margin-bottom: 0;
+      }
+      .inline-add {
+        display: flex;
+        gap: 8px;
+      }
+      .inline-add input {
+        flex: 1;
+        min-width: 0;
+      }
+      .inline-add .btn {
+        flex: none;
+      }
+      .link-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 150px 116px 32px;
+        gap: 8px;
+        align-items: center;
+        padding: 8px 0;
+        border-bottom: 1px dashed var(--line);
+      }
+      .link-ref {
+        font: 12px var(--mono);
+        overflow-wrap: anywhere;
+      }
+      .icon-btn {
+        display: inline-grid;
+        place-items: center;
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--muted);
+        font-size: 18px;
+        line-height: 1;
+        cursor: pointer;
+      }
+      .icon-btn:hover {
+        color: var(--danger);
+      }
+      .worklog-actions {
+        align-items: center;
+      }
+      .worklog-actions #workLogKind {
+        flex: 0 1 190px;
+      }
+      .worklog-actions #addWorkLog {
+        flex: none;
+        margin-left: auto;
+      }
+      .log-kind {
+        display: inline-block;
+        padding: 2px 7px;
+        border: 1px solid color-mix(in srgb, currentColor 40%, transparent);
+        border-radius: 999px;
+        background-color: color-mix(in srgb, currentColor 12%, transparent);
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 760;
+        letter-spacing: 0.065em;
+        text-transform: uppercase;
+      }
+      .log-kind[data-kind="progress"] {
+        color: var(--ok);
+      }
+      .log-kind[data-kind="decision"] {
+        color: var(--accent);
+      }
+      .log-kind[data-kind="blocker"] {
+        color: var(--danger);
+      }
       .row {
         display: flex;
         gap: 11px;
@@ -868,7 +965,7 @@
       }
       .drawer-subtask {
         display: grid;
-        grid-template-columns: 18px minmax(0, 1fr) 104px 24px;
+        grid-template-columns: 18px minmax(0, 1fr) 104px 32px;
         align-items: center;
         gap: 8px;
         padding: 8px 0;
@@ -896,13 +993,6 @@
         border-radius: 7px;
         background-color: var(--surface-2);
         font-size: 11px;
-      }
-      .drawer-subtask button {
-        padding: 0;
-        border: 0;
-        background: transparent;
-        color: var(--muted);
-        font-size: 18px;
       }
       .hint {
         color: var(--muted);
@@ -999,7 +1089,17 @@
           display: block;
         }
         .drawer-subtask {
-          grid-template-columns: 18px minmax(0, 1fr) 24px;
+          grid-template-columns: 18px minmax(0, 1fr) 32px;
+        }
+        .link-row {
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 32px;
+        }
+        .link-ref {
+          grid-column: 1 / 3;
+        }
+        .link-row .icon-btn {
+          grid-column: 3;
+          grid-row: 1;
         }
         .drawer-subtask select {
           grid-column: 2 / 3;
@@ -1025,6 +1125,16 @@
       }
       .notice[hidden] {
         display: none;
+      }
+      .notice.warn {
+        background-color: var(--warn-soft);
+        border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+        color: var(--ink);
+      }
+      .notice.error {
+        background-color: var(--danger-soft);
+        border-color: color-mix(in srgb, var(--danger) 45%, var(--line));
+        color: var(--ink);
       }
       .activity-list {
         list-style: none;
@@ -1251,6 +1361,7 @@
       aria-modal="true"
       aria-label="Task details"
       aria-hidden="true"
+      inert
     >
       <div class="drawer-head">
         <b id="drawerLabel">Task details</b><span class="spacer"></span><button
@@ -1262,7 +1373,7 @@
         </button>
       </div>
       <div class="drawer-body">
-        <p id="drawerMessage" class="notice" role="alert" hidden></p>
+        <p id="drawerMessage" class="notice error" role="alert" hidden></p>
         <div id="editConflict" class="notice" role="status" hidden>
           <p id="conflictMessage"></p>
           <button class="btn" id="reloadTask" type="button">
@@ -1273,7 +1384,8 @@
             loading the latest version.
           </p>
         </div>
-        <div id="completionNotice" class="notice" role="status" hidden></div>
+        <div id="completionNotice" class="notice warn" role="status" hidden>
+        </div>
         <div class="field">
           <label for="fTitle">Title</label><textarea
             id="fTitle"
@@ -1313,7 +1425,7 @@
           </div>
         </div>
         <datalist id="projectOptions"></datalist>
-        <div class="field">
+        <div class="field stack">
           <label>Subtasks <span id="subCount"></span></label><div id="subtasks">
           </div><input
             id="newSubtask"
@@ -1327,7 +1439,7 @@
             placeholder="Context, links, decisions, blockers…"
           ></textarea>
         </div>
-        <section class="field" aria-labelledby="linksTitle">
+        <section class="field stack" aria-labelledby="linksTitle">
           <label id="linksTitle">Jira &amp; merge requests</label>
           <p class="hint">
             Required links cover this outcome; references are for navigation.
@@ -1336,27 +1448,33 @@
           </p>
           <div id="draftLinks"></div>
           <label for="newLink">Jira key or full Jira/GitLab URL</label>
-          <input id="newLink" placeholder="PROJ-123 or https://gitlab.com/…">
-          <button class="btn" id="stageLink" type="button">
-            Add link to draft
-          </button>
+          <div class="inline-add">
+            <input id="newLink" placeholder="PROJ-123 or https://gitlab.com/…">
+            <button class="btn" id="stageLink" type="button">
+              Add link to draft
+            </button>
+          </div>
           <label for="fReconcileMode">Reconciliation</label>
           <select id="fReconcileMode">
             <option value="automatic">Automatic</option>
             <option value="manual">Manual</option>
           </select>
           <p class="hint">
-            Manual excludes future automatic updates. Automatic completion is
-            not running yet.
+            Manual keeps the reconciler from changing this card.
           </p>
         </section>
-        <section class="field" aria-labelledby="workLogTitle">
+        <section class="field stack" aria-labelledby="workLogTitle">
           <label id="workLogTitle">Work log</label>
           <p class="hint">
             Progress, decisions, blockers, and next steps. Notes remain
             reference material.
           </p>
-          <div class="row">
+          <textarea
+            id="workLogText"
+            rows="3"
+            placeholder="What changed, what was decided, what is blocked, or what happens next?"
+          ></textarea>
+          <div class="row worklog-actions">
             <select id="workLogKind" aria-label="Work log type">
               <option value="progress">Progress</option>
               <option value="decision">Decision</option>
@@ -1367,11 +1485,6 @@
             </select>
             <button class="btn" id="addWorkLog" type="button">Add entry</button>
           </div>
-          <textarea
-            id="workLogText"
-            rows="3"
-            placeholder="What changed, what was decided, what is blocked, or what happens next?"
-          ></textarea>
           <div id="workLog" aria-live="polite"></div>
         </section>
         <div class="hint" id="metadata"></div>
@@ -1580,6 +1693,14 @@
         tasks = normalizeTasks(data.tasks);
         render();
       }
+      function activityValue(value) {
+        const text = value || "∅";
+        return text.length > 140
+          ? `<span title="${esc(text)}">${
+            esc(text.slice(0, 140))
+          }…</span>`
+          : `<span>${esc(text)}</span>`;
+      }
       async function loadActivity(target, id) {
         const element = $(target);
         if (target === "taskActivity" && !id) {
@@ -1605,8 +1726,8 @@
                 " · revision " + event.revision +
                 "</small><ul>" + event.changes.map((change) =>
                   "<li>" + esc(change.field) + ": " +
-                  esc(change.before || "∅") + " → " +
-                  esc(change.after || "∅") + "</li>"
+                  activityValue(change.before) + " → " +
+                  activityValue(change.after) + "</li>"
                 ).join("") + "</ul></li>"
               ).join("") + '</ol><p class="hint">' + (data.more
                 ? "Showing the latest 50 retained changes."
@@ -1640,9 +1761,10 @@
           element.innerHTML = entries.length
             ? '<ol class="activity-list">' + entries.map((record) => {
               const entry = record.workLog;
-              return "<li><strong>" +
+              return '<li><span class="log-kind" data-kind="' +
+                esc(entry.kind) + '">' +
                 esc(entry.kind.replaceAll("_", " ")) +
-                "</strong><small>" +
+                "</span><small>" +
                 esc(entry.actor) + " · occurred " +
                 esc(new Date(entry.occurredAt).toLocaleString()) +
                 (entry.origin !== "direct"
@@ -2845,25 +2967,21 @@
       });
 
       function renderDraftLinks() {
-        $("draftLinks").innerHTML = (draft.links || []).map((
-          link,
-          index,
-        ) =>
-          `<div class="field"><span>${
-            esc(link.ref || link.url)
-          }</span><select data-link-scope="${index}" aria-label="Scope for ${
-            esc(link.ref || link.url)
-          }"><option value="">Whole card</option>${
-            draft.subtasks.filter((sub) => sub.id).map((sub) =>
-              `<option value="${esc(sub.id)}" ${
-                link.subtaskId === sub.id ? "selected" : ""
-              }>${esc(sub.title)}</option>`
-            ).join("")
-          }</select><select data-link-role="${index}" aria-label="Role for ${
-            esc(link.ref || link.url)
-          }"><option value="required">Required</option><option value="reference" ${
-            link.role === "reference" ? "selected" : ""
-          }>Reference</option></select><button class="btn" type="button" data-remove-link="${index}">Remove link</button></div>`
+        $("draftLinks").innerHTML = (draft.links || []).map(
+          (link, index) => {
+            const ref = esc(link.ref || link.url);
+            return `<div class="link-row"><span class="link-ref">${ref}${
+              link.state ? " · " + esc(link.state) : ""
+            }</span><select data-link-scope="${index}" aria-label="Scope for ${ref}"><option value="">Whole card</option>${
+              draft.subtasks.filter((sub) => sub.id).map((sub) =>
+                `<option value="${esc(sub.id)}" ${
+                  link.subtaskId === sub.id ? "selected" : ""
+                }>${esc(sub.title)}</option>`
+              ).join("")
+            }</select><select data-link-role="${index}" aria-label="Role for ${ref}"><option value="required">Required</option><option value="reference" ${
+              link.role === "reference" ? "selected" : ""
+            }>Reference</option></select><button class="icon-btn" type="button" data-remove-link="${index}" aria-label="Remove link ${ref}">×</button></div>`;
+          },
         ).join("");
       }
       $("stageLink").addEventListener("click", () => {
@@ -2955,6 +3073,7 @@
         $("scrim").classList.add("show");
         $("drawer").classList.add("show");
         $("drawer").setAttribute("aria-hidden", "false");
+        $("drawer").inert = false;
         $("fTitle").focus({ preventScroll: true });
       }
       function closeDrawer() {
@@ -2966,6 +3085,7 @@
         $("scrim").classList.remove("show");
         $("drawer").classList.remove("show");
         $("drawer").setAttribute("aria-hidden", "true");
+        $("drawer").inert = true;
         (drawerReturnFocus?.isConnected
           ? drawerReturnFocus
           : $("newTask")).focus();
@@ -2997,7 +3117,7 @@
                   lane.key === subtask.lane ? "selected" : ""
                 }>${lane.name}</option>`
               ).join("")
-            }</select><button type="button" data-remove-sub="${index}" aria-label="Remove subtask">×</button></div>`
+            }</select><button class="icon-btn" type="button" data-remove-sub="${index}" aria-label="Remove subtask">×</button></div>`
           ).join("")
           : '<div class="hint">No subtasks yet.</div>';
       }

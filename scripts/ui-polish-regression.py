@@ -1,6 +1,7 @@
 """Live UI polish regression on a throwaway board. Uses disposable API records."""
 
 import json
+import re
 import sys
 import tempfile
 import urllib.parse
@@ -403,10 +404,119 @@ def check_controls_style(browser, evidence, ids):
         finish(context, errors, label)
 
 
+LINK_ROWS = """() => [...document.querySelectorAll("#draftLinks .link-row")].map((row) => {
+  const box = (selector) => {
+    const r = row.querySelector(selector).getBoundingClientRect();
+    return { top: r.top, bottom: r.bottom, middle: (r.top + r.bottom) / 2 };
+  };
+  return {
+    ref: box(".link-ref"),
+    scope: box("[data-link-scope]"),
+    role: box("[data-link-role]"),
+    remove: box("[data-remove-link]"),
+    text: row.querySelector(".link-ref").textContent,
+  };
+})"""
+
+LONGEST_TEXT = """(root) => {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let longest = "";
+  while (walker.nextNode()) {
+    const text = walker.currentNode.textContent.trim();
+    if (text.length > longest.length) longest = text;
+  }
+  return longest;
+}"""
+
+
+def middle(locator):
+    box = locator.bounding_box()
+    return box["y"] + box["height"] / 2
+
+
+def check_drawer(browser, evidence, ids):
+    billing = ids["billing"]
+    for width, scheme in [(1280, "light"), (1280, "dark"), (390, "light"), (390, "dark")]:
+        label = f"drawer {width} {scheme}"
+        context, page, errors = open_page(browser, width, scheme)
+        drawer = page.locator("#drawer")
+        assert drawer.evaluate("e => e.inert && e.hasAttribute('inert')"), label
+        page.locator(".lane-add input").last.focus()
+        for step in range(60):
+            page.keyboard.press("Tab")
+            inside = page.evaluate(
+                "document.getElementById('drawer').contains(document.activeElement)"
+            )
+            assert not inside, f"{label}: Tab {step + 1} focused the closed drawer"
+
+        edit = page.locator(f'[data-task-id="{billing}"] [data-open]')
+        edit.click()
+        expect(page.locator("#fTitle")).to_be_focused()
+        assert not drawer.evaluate("e => e.inert"), label
+        page.locator("#drawer").screenshot(
+            path=str(evidence / f"drawer-top-{width}-{scheme}.png"), animations="disabled"
+        )
+
+        rows = page.evaluate(LINK_ROWS)
+        assert len(rows) == 2, f"{label}: link rows {rows}"
+        for row in rows:
+            if width >= 1280:
+                spread = [row[part]["middle"] for part in ("ref", "scope", "role", "remove")]
+                assert max(spread) - min(spread) <= 4, f"{label}: link row on many lines {row}"
+            else:
+                assert abs(row["scope"]["top"] - row["role"]["top"]) <= 4, f"{label}: {row}"
+                assert row["ref"]["bottom"] <= row["scope"]["top"], f"{label}: {row}"
+                assert row["remove"]["bottom"] <= row["scope"]["top"], f"{label}: {row}"
+        page.locator("#draftLinks").scroll_into_view_if_needed()
+        page.locator("#drawer").screenshot(
+            path=str(evidence / f"drawer-links-{width}-{scheme}.png"), animations="disabled"
+        )
+
+        kind, add = page.locator("#workLogKind"), page.locator("#addWorkLog")
+        assert abs(middle(kind) - middle(add)) <= 4, f"{label}: work log controls split"
+        assert page.locator("#workLogText").bounding_box()["y"] < kind.bounding_box()["y"], label
+        page.locator("#workLogText").fill(f"Vendor sandbox down ({scheme} {width})")
+        kind.select_option("blocker")
+        add.click()
+        badge = page.locator('#workLog .log-kind[data-kind="blocker"]').first
+        expect(badge).to_be_visible()
+        expect(badge).to_have_text("blocker")
+        expect(page.locator('#workLog .log-kind[data-kind="progress"]')).to_have_count(1)
+        page.locator("#workLog").scroll_into_view_if_needed()
+        page.locator("#drawer").screenshot(
+            path=str(evidence / f"drawer-worklog-{width}-{scheme}.png"), animations="disabled"
+        )
+
+        activity = page.locator("#taskActivity")
+        expect(activity.locator(".activity-list")).to_be_visible()
+        longest = activity.evaluate(LONGEST_TEXT)
+        assert len(longest) <= 200, f"{label}: activity text {len(longest)} chars"
+        clipped = activity.locator("span[title]").first
+        expect(clipped).to_have_text(re.compile(r"^.{140}…$"))
+        assert len(clipped.get_attribute("title")) > 140, f"{label}: clipped title"
+
+        page.keyboard.press("Escape")
+        expect(drawer).to_have_attribute("aria-hidden", "true")
+        assert drawer.evaluate("e => e.inert"), label
+        expect(edit).to_be_focused()
+
+        if (width, scheme) == (1280, "light"):
+            edit.click()
+            expect(page.locator("#fTitle")).to_be_focused()
+            page.locator('[data-link-role="0"]').select_option("reference")
+            page.locator("#saveTask").click()
+            expect(drawer).to_have_attribute("aria-hidden", "true")
+            saved = api("GET", "/api/tasks/" + billing)
+            roles = [link["role"] for link in saved.get("task", saved)["links"]]
+            assert roles == ["reference", "required"], f"{label}: saved roles {roles}"
+        finish(context, errors, label)
+
+
 CHECKS = {
     "header_fit": check_header_fit,
     "project_dropdown": check_project_dropdown,
     "controls_style": check_controls_style,
+    "drawer": check_drawer,
 }
 
 
