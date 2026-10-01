@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 
 from acceptance import URL, api
+from playwright.sync_api import TimeoutError as PlaywrightTimeout
 from playwright.sync_api import expect, sync_playwright
 
 WIDTHS = [1440, 1280, 1100, 1041, 1040, 900, 800, 601, 600, 390]
@@ -281,9 +282,131 @@ def check_project_dropdown(browser, evidence, ids):
         finish(context, errors, label)
 
 
+SELECT_STYLES = """() => [...document.querySelectorAll("select")]
+  .filter((e) => e.getClientRects().length)
+  .map((e) => {
+    const s = getComputedStyle(e);
+    return {
+      name: e.id || e.getAttribute("aria-label") || e.className,
+      appearance: s.appearance,
+      image: s.backgroundImage,
+      padding: parseFloat(s.paddingRight),
+    };
+  })"""
+
+FOCUS_STYLE = """() => {
+  const color = (token) => {
+    const probe = document.createElement("span");
+    probe.style.cssText = `transition: none; color: var(${token})`;
+    document.body.append(probe);
+    const value = getComputedStyle(probe).color;
+    probe.remove();
+    return value;
+  };
+  const ring = color("--ring"), accent = color("--accent");
+  const el = document.activeElement;
+  const s = getComputedStyle(el);
+  const r = el.getBoundingClientRect();
+  return {
+    outline: s.outlineStyle !== "none" && parseFloat(s.outlineWidth) > 0,
+    halo: s.boxShadow.includes(ring) && s.borderTopColor === accent,
+    box: { x: r.x, y: r.y, width: r.width, height: r.height },
+  };
+}"""
+
+
+def tab_to(page, selector, label, limit=120):
+    for _ in range(limit):
+        page.keyboard.press("Tab")
+        if page.evaluate("s => document.activeElement.matches(s)", selector):
+            return
+    raise AssertionError(f"{label}: Tab never reached {selector}")
+
+
+def expect_focus_ring(page, evidence, name, label):
+    try:
+        page.wait_for_function(
+            f"() => {{ const s = ({FOCUS_STYLE})(); return s.outline || s.halo; }}",
+            timeout=2000,
+        )
+    except PlaywrightTimeout:
+        raise AssertionError(
+            f"{label}: no focus ring on {name} {page.evaluate(FOCUS_STYLE)}"
+        ) from None
+    style = page.evaluate(FOCUS_STYLE)
+    box, pad = style["box"], 10
+    viewport = page.viewport_size
+    x, y = max(box["x"] - pad, 0), max(box["y"] - pad, 0)
+    page.screenshot(
+        path=str(evidence / f"focus-{name}-{label.split()[-1]}.png"),
+        clip={
+            "x": x,
+            "y": y,
+            "width": min(box["width"] + 2 * pad, viewport["width"] - x),
+            "height": min(box["height"] + 2 * pad, viewport["height"] - y),
+        },
+        animations="disabled",
+    )
+
+
+def check_controls_style(browser, evidence, ids):
+    billing = ids["billing"]
+    for scheme in SCHEMES:
+        label = f"controls 1280 {scheme}"
+        context, page, errors = open_page(browser, 1280, scheme)
+        card = page.locator(f'[data-task-id="{billing}"]')
+        card.locator(".card-title").click()
+        expect(card.locator(".sub-lane").first).to_be_visible()
+        page.locator("body").click(position={"x": 2, "y": 2})
+
+        page.evaluate("document.activeElement.blur()")
+        for name, selector in [
+            ("search", "#search"),
+            ("project", "#projectFilterButton"),
+            ("done", "#doneToggle"),
+            ("card-title", ".card-title"),
+            ("lane-add", ".lane-add input"),
+        ]:
+            tab_to(page, selector, label)
+            expect_focus_ring(page, evidence, name, label)
+
+        card.locator("[data-open]").click()
+        expect(page.locator("#fTitle")).to_be_focused()
+        page.keyboard.press("Tab")
+        expect(page.locator("#fLane")).to_be_focused()
+        expect_focus_ring(page, evidence, "fLane", label)
+
+        selects = page.evaluate(SELECT_STYLES)
+        assert len(selects) >= 8, f"{label}: only {len(selects)} visible selects"
+        for item in selects:
+            assert item["appearance"] == "none", f"{label}: {item}"
+            assert "linear-gradient" in item["image"], f"{label}: no chevron {item}"
+            assert item["padding"] >= 24, f"{label}: tight chevron {item}"
+        radius = page.evaluate(
+            "() => ['workLogKind', 'fLane'].map((id) => getComputedStyle(document.getElementById(id)).borderRadius)"
+        )
+        assert radius[0] == radius[1], f"{label}: work log radius {radius}"
+
+        page.locator("#drawer").screenshot(
+            path=str(evidence / f"controls-drawer-{scheme}.png"), animations="disabled"
+        )
+        page.locator("#workLogKind").scroll_into_view_if_needed()
+        page.locator("#drawer").screenshot(
+            path=str(evidence / f"controls-drawer-links-{scheme}.png"),
+            animations="disabled",
+        )
+        page.keyboard.press("Escape")
+        expect(page.locator("#drawer")).to_have_attribute("aria-hidden", "true")
+        card.screenshot(
+            path=str(evidence / f"controls-card-{scheme}.png"), animations="disabled"
+        )
+        finish(context, errors, label)
+
+
 CHECKS = {
     "header_fit": check_header_fit,
     "project_dropdown": check_project_dropdown,
+    "controls_style": check_controls_style,
 }
 
 
