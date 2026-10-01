@@ -660,6 +660,61 @@ def check_offline(browser, evidence, width, scheme):
     page.wait_for_timeout(3500)
     expect(page.locator("#statusText")).to_have_text("offline")
     shot(page, evidence, f"state-offline-{width}-{scheme}")
+    page.locator("#newTask").click()
+    page.locator("#fTitle").fill("Offline save")
+    page.locator("#saveTask").click()
+    expect(page.locator("#drawerMessage")).to_be_visible()
+    expect(page.locator("#drawerMessage")).not_to_be_empty()
+    expect(page.locator("#banner")).not_to_have_class(re.compile(r"\bshow\b"))
+    finish(context, errors, label)
+
+
+def wait_for_routes(page, held, count, label):
+    for _ in range(50):
+        if len(held) >= count:
+            return
+        page.wait_for_timeout(100)
+    raise AssertionError(f"{label}: expected {count} held requests, saw {len(held)}")
+
+
+def sse_body(tasks):
+    return f"retry: 100\nevent: tasks\ndata: {json.dumps(tasks)}\n\n"
+
+
+def check_stale_load(browser, evidence, ids, width, scheme):
+    label = f"stale load {width} {scheme}"
+    context, page, errors = new_page(browser, width, scheme)
+    held = []
+    page.route("**/api/tasks", lambda route: held.append(route))
+    page.goto(URL)
+    billing = page.locator(f'[data-task-id="{ids["billing"]}"]')
+    expect(billing).to_have_count(1)
+    wait_for_routes(page, held, 1, label)
+    held[0].fulfill(status=200, body='{"tasks":[]}', content_type="application/json")
+    page.wait_for_timeout(500)
+    expect(billing).to_have_count(1)
+    expect(page.locator(".board-state")).to_have_count(0)
+    finish(context, errors, label)
+
+
+def check_snapshot_recovers(browser, evidence, ids, width, scheme):
+    label = f"snapshot recovers {width} {scheme}"
+    context, page, errors = new_page(browser, width, scheme)
+    streams = []
+    page.route("**/api/events", lambda route: streams.append(route))
+    page.goto(URL)
+    expect(page.locator(".lane")).to_have_count(5)
+    wait_for_routes(page, streams, 1, label)
+    body = sse_body(api("GET", "/api/tasks"))
+    streams[0].fulfill(status=200, body=body, content_type="text/event-stream")
+    wait_for_routes(page, streams, 2, label)
+    page.route("**/api/tasks", lambda route: route.abort())
+    page.evaluate("() => loadBoard()")
+    expect(page.locator(".board-state.error")).to_contain_text("Try again")
+    streams[1].fulfill(status=200, body=body, content_type="text/event-stream")
+    expect(page.locator(".lane")).to_have_count(5)
+    expect(page.locator(".board-state")).to_have_count(0)
+    expect(page.locator(f'[data-task-id="{ids["billing"]}"]')).to_have_count(1)
     finish(context, errors, label)
 
 
@@ -762,6 +817,8 @@ def check_states(browser, evidence, ids):
         check_loading(browser, evidence, 1280, scheme)
         check_load_error(browser, evidence, 1280, scheme)
         check_offline(browser, evidence, 1280, scheme)
+        check_stale_load(browser, evidence, ids, 1280, scheme)
+        check_snapshot_recovers(browser, evidence, ids, 1280, scheme)
         check_no_cards(browser, evidence, 1280, scheme)
         check_banner(browser, evidence, ids, 1280, scheme)
         for width in [1280, 390]:
