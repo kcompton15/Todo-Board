@@ -1,0 +1,21 @@
+services:
+  board:
+    build:
+      context: .
+    container_name: ${TODO_CONTAINER_NAME:-todo-board}
+    restart: unless-stopped
+    environment:
+      TODO_ADDR: 0.0.0.0:7337
+      TODO_DATA_DIR: /data
+      TODO_INBOX_INTERVAL: 1s
+      TODO_JIRA_SITE: ${TODO_JIRA_SITE:-}
+    ports:
+      - "127.0.0.1:${TODO_PORT:-7337}:7337"
+    volumes:
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "/todod", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 3s

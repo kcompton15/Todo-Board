@@ -1,0 +1,9 @@
+{
+  "name": "todo-board",
+  "displayName": "Todo Board",
+  "version": "1.0.0",
+  "description": "Injects the task board rules and active cards into each session, plus setup, doctor and reconciler commands",
+  "author": {
+    "name": "kcompton15"
+  }
+}

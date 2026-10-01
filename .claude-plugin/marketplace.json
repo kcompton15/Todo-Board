@@ -1,0 +1,14 @@
+{
+  "name": "kcompton15",
+  "description": "Task board plugins",
+  "owner": {
+    "name": "kcompton15"
+  },
+  "plugins": [
+    {
+      "name": "todo-board",
+      "source": "./plugin",
+      "description": "Keeps your local todo-board board current from Claude Code sessions"
+    }
+  ]
+}

@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+die() {
+  printf 'install-codex-integration: %s\n' "$*" >&2
+  exit 1
+}
+
+dry_run=false
+uninstall=false
+for argument in "$@"; do
+  case "$argument" in
+    --dry-run) dry_run=true ;;
+    --uninstall) uninstall=true ;;
+    *) die "usage: scripts/install-codex-integration [--dry-run] [--uninstall]" ;;
+  esac
+done
+command -v jq >/dev/null 2>&1 || die "required command 'jq' is not installed"
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+rules="$script_dir/../plugin/rules/board-rules.md"
+[[ -r "$rules" ]] || die "rules file missing: $rules"
+codex_home="${CODEX_HOME:-$HOME/.codex}"
+agents="$codex_home/AGENTS.md"
+hooks="$codex_home/hooks.json"
+begin='<!-- TODO-BOARD:BEGIN -->'
+end='<!-- TODO-BOARD:END -->'
+hook_command=$(printf '%q' "$script_dir/board-context.sh")
+stamp=$(date +%Y%m%d%H%M%S)
+
+say() { printf '%s\n' "$*"; }
+
+backup() {
+  [[ -e "$1" ]] || return 0
+  cp -p "$1" "$1.bak-todo-board-$stamp-$$"
+  say "backed up $1"
+}
+
+# Prints the file with the board block replaced by stdin's content (empty stdin removes it).
+replace_block() {
+  local file=$1 begins ends
+  begins=$(grep -cxF "$begin" "$file" || true)
+  ends=$(grep -cxF "$end" "$file" || true)
+  if [[ "$begins" == 0 && "$ends" == 0 ]]; then
+    return 3
+  fi
+  [[ "$begins" == 1 && "$ends" == 1 ]] || die "$file has $begins BEGIN and $ends END board markers; fix them by hand"
+  local begin_line end_line inner unexpected
+  begin_line=$(grep -nxF "$begin" "$file" | cut -d: -f1)
+  end_line=$(grep -nxF "$end" "$file" | cut -d: -f1)
+  ((begin_line < end_line)) || die "$file has the END board marker before BEGIN; fix it by hand"
+  inner=$(sed -n "$((begin_line + 1)),$((end_line - 1))p" "$file")
+  unexpected=$(grep -E '^#{1,6} ' <<<"$inner" | grep -vxF -f <(grep -E '^#{1,6} ' "$rules") || true)
+  [[ -z "$unexpected" ]] || die "$file's board block also contains other sections, so it was left alone:
+$unexpected
+Move the $begin marker down to the '## Personal task board' heading, then rerun."
+  REPLACEMENT=$(cat) awk -v b="$begin" -v e="$end" '
+    $0 == b { skip = 1; if (ENVIRON["REPLACEMENT"] != "") print ENVIRON["REPLACEMENT"]; next }
+    $0 == e { skip = 0; next }
+    !skip { print }
+  ' "$file"
+}
+
+block=$(printf '%s\n%s%s' "$begin" "$(cat "$rules")" $'\n'"$end")
+
+update_agents() {
+  local next status=0
+  if [[ ! -e "$agents" ]]; then
+    next=$block
+  else
+    next=$(replace_block "$agents" <<<"$([[ "$uninstall" == true ]] || printf '%s' "$block")") || status=$?
+    if [[ "$status" == 3 ]]; then
+      [[ "$uninstall" == true ]] && { say "AGENTS.md: no board block"; return; }
+      next="$(cat "$agents")"$'\n\n'"$block"
+    elif [[ "$status" != 0 ]]; then
+      exit "$status"
+    fi
+  fi
+  if [[ -e "$agents" && "$next" == "$(cat "$agents")" ]]; then
+    say "AGENTS.md: already current"
+    return
+  fi
+  if [[ "$dry_run" == true ]]; then
+    say "AGENTS.md: would $([[ "$uninstall" == true ]] && echo remove || echo write) the board block in $agents"
+    return
+  fi
+  backup "$agents"
+  mkdir -p "$codex_home"
+  printf '%s\n' "$next" >"$agents.tmp-todo-board"
+  mv -f "$agents.tmp-todo-board" "$agents"
+  say "AGENTS.md: $([[ "$uninstall" == true ]] && echo removed || echo wrote) the board block"
+}
+
+update_hooks() {
+  local current next
+  if [[ -e "$hooks" ]]; then
+    current=$(jq -e 'if type == "object" then . else error("not an object") end' "$hooks") ||
+      die "$hooks is not a JSON object; fix it by hand"
+  else
+    [[ "$uninstall" == true ]] && { say "hooks.json: none"; return; }
+    current='{}'
+  fi
+  if [[ "$uninstall" == true ]]; then
+    next=$(jq --arg cmd "$hook_command" '
+      if .hooks.SessionStart then
+        .hooks.SessionStart |= map(.hooks |= map(select(.command != $cmd)) | select(.hooks | length > 0))
+        | if (.hooks.SessionStart | length) == 0 then del(.hooks.SessionStart) else . end
+      else . end' <<<"$current")
+  elif jq -e '[.hooks.SessionStart[]?.hooks[]?.command // empty | select(endswith("/scripts/board-context.sh"))] | length > 0' \
+    <<<"$current" >/dev/null; then
+    say "hooks.json: a board-context hook is already registered"
+    return
+  else
+    next=$(jq --arg cmd "$hook_command" '
+      .hooks.SessionStart = ((.hooks.SessionStart // []) + [{
+        matcher: "startup|resume|clear|compact",
+        hooks: [{type: "command", command: $cmd, timeout: 3, additionalContextLimit: 2000, statusMessage: "Loading active task board"}]
+      }])' <<<"$current")
+  fi
+  if [[ -e "$hooks" && "$(jq -S . <<<"$next")" == "$(jq -S . "$hooks")" ]]; then
+    say "hooks.json: already current"
+    return
+  fi
+  if [[ "$dry_run" == true ]]; then
+    say "hooks.json: would $([[ "$uninstall" == true ]] && echo remove || echo add) the SessionStart board hook in $hooks"
+    return
+  fi
+  backup "$hooks"
+  mkdir -p "$codex_home"
+  jq . <<<"$next" >"$hooks.tmp-todo-board"
+  mv -f "$hooks.tmp-todo-board" "$hooks"
+  say "hooks.json: $([[ "$uninstall" == true ]] && echo removed || echo added) the SessionStart board hook"
+}
+
+update_agents
+update_hooks
+if [[ "$uninstall" == false && "$dry_run" == false ]]; then
+  say "Start a new Codex session and approve the 'Loading active task board' hook when Codex asks."
+fi

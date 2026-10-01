@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+die() {
+  printf 'team-uninstall: %s\n' "$*" >&2
+  exit 1
+}
+
+dry_run=false
+for argument in "$@"; do
+  case "$argument" in
+    --dry-run) dry_run=true ;;
+    *) die "usage: scripts/team-uninstall [--dry-run]  (board data in data/ is always kept)" ;;
+  esac
+done
+
+repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+run() {
+  if [[ "$dry_run" == true ]]; then
+    printf 'would run: %s\n' "$*"
+  else
+    "$@"
+  fi
+}
+
+if [[ -e "$HOME/Library/LaunchAgents/io.github.kcompton15.board-reconciler.plist" ]]; then
+  run "$repo/scripts/install-board-reconciler" --uninstall
+fi
+if [[ -e "$HOME/Library/LaunchAgents/io.github.kcompton15.board-notifier.plist" ]]; then
+  run "$repo/scripts/install-board-notifier" --uninstall
+fi
+
+if command -v codex >/dev/null 2>&1 || [[ -e "${CODEX_HOME:-$HOME/.codex}/AGENTS.md" ]]; then
+  if [[ "$dry_run" == true ]]; then
+    "$repo/scripts/install-codex-integration" --uninstall --dry-run
+  else
+    "$repo/scripts/install-codex-integration" --uninstall
+  fi
+fi
+
+if command -v claude >/dev/null 2>&1; then
+  if claude plugin list --json | jq -e '.[] | select(.id == "todo-board@kcompton15")' >/dev/null; then
+    run claude plugin uninstall todo-board@kcompton15
+  fi
+  if claude plugin marketplace list --json | jq -e '.[] | select(.name == "kcompton15")' >/dev/null; then
+    run claude plugin marketplace remove kcompton15
+  fi
+fi
+
+if [[ -L "$HOME/.local/bin/todo" && "$(readlink "$HOME/.local/bin/todo")" == "$repo/scripts/todo" ]]; then
+  run rm -f "$HOME/.local/bin/todo"
+fi
+
+run docker compose -f "$repo/docker-compose.yml" down
+printf 'Done%s. Board data is still in %s/data.\n' "$([[ "$dry_run" == true ]] && echo ' (dry run)')" "$repo"

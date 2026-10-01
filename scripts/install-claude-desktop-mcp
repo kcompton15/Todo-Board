@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+need() {
+  command -v "$1" >/dev/null 2>&1 || {
+    printf 'install-claude-desktop-mcp: required command %q is not installed\n' "$1" >&2
+    exit 1
+  }
+}
+
+need jq
+command -v go >/dev/null 2>&1 || need docker
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(cd "$script_dir/.." && pwd)
+binary_dir="$repo_root/bin"
+binary="$binary_dir/todo-mcp"
+config_dir="$HOME/Library/Application Support/Claude"
+config="$config_dir/claude_desktop_config.json"
+board_url="${TODO_URL:-http://127.0.0.1:7337}"
+
+mkdir -p "$binary_dir" "$config_dir"
+temp_binary=$(mktemp "$binary_dir/.todo-mcp.XXXXXX")
+current_config=$(mktemp "$config_dir/.todo-board-current.XXXXXX")
+next_config=$(mktemp "$config_dir/.todo-board-next.XXXXXX")
+cleanup() {
+  rm -f "$temp_binary" "$current_config" "$next_config"
+}
+trap cleanup EXIT
+
+if command -v go >/dev/null 2>&1; then
+  (
+    cd "$repo_root"
+    CGO_ENABLED=0 go build -trimpath -o "$temp_binary" ./cmd/todo-mcp
+  )
+else
+  arch=arm64
+  [[ "$(uname -m)" == x86_64 ]] && arch=amd64
+  docker run --rm -v "$repo_root":/src -w /src -e CGO_ENABLED=0 -e GOOS=darwin -e GOARCH="$arch" -e GOFLAGS=-buildvcs=false \
+    golang:1.27.1-alpine3.24 go build -trimpath -o "bin/$(basename "$temp_binary")" ./cmd/todo-mcp
+fi
+chmod 0755 "$temp_binary"
+mv -f "$temp_binary" "$binary"
+temp_binary=""
+
+if [[ -f "$config" ]]; then
+  jq empty "$config"
+  cp -p "$config" "$current_config"
+else
+  printf '%s\n' '{}' > "$current_config"
+fi
+
+jq --arg command "$binary" --arg board_url "$board_url" '
+  if ((.mcpServers // {}) | type) != "object" then
+    error("mcpServers must be an object")
+  else
+    .mcpServers = ((.mcpServers // {}) + {
+      "todo-board": {
+        "command": $command,
+        "args": [],
+        "env": {"TODO_URL": $board_url}
+      }
+    })
+  end
+' "$current_config" > "$next_config"
+jq empty "$next_config"
+
+if cmp -s "$current_config" "$next_config"; then
+  printf 'Todo Board is already registered with Claude Desktop.\n'
+  exit 0
+fi
+
+if [[ -f "$config" ]]; then
+  timestamp=$(date '+%Y%m%d%H%M%S')
+  backup="$config.todo-board-backup-$timestamp"
+  cp -p "$config" "$backup"
+  chmod "$(stat -f '%Lp' "$config")" "$next_config"
+  printf 'Backed up Claude Desktop configuration to %s\n' "$backup"
+else
+  chmod 0600 "$next_config"
+fi
+mv -f "$next_config" "$config"
+next_config=""
+
+printf 'Registered Todo Board with Claude Desktop. Quit and reopen Claude Desktop, then start a new chat.\n'

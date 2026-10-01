@@ -1,0 +1,318 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+die() {
+  printf 'install-board-reconciler: %s\n' "$*" >&2
+  exit 1
+}
+
+usage() {
+  die "usage: scripts/install-board-reconciler --configure [--jira-site HOST] [--gitlab-group G] [--issue-prefixes PROJ,OPS] [--gitlab-user U] [--jira-email E] [--force] | --enable [--with-model] | --disable | --probe | --uninstall  [--label L]"
+}
+
+need() {
+  command -v "$1" >/dev/null 2>&1 || die "required command '$1' is not installed"
+}
+
+xml_escape() {
+  local value=$1
+  value=${value//&/&amp;}
+  value=${value//</&lt;}
+  value=${value//>/&gt;}
+  value=${value//\"/&quot;}
+  value=${value//\'/&apos;}
+  printf '%s' "$value"
+}
+
+mode=""
+with_model=false
+force=false
+label="${BOARD_RECONCILER_LABEL:-io.github.kcompton15.board-reconciler}"
+gitlab_user=""
+jira_email=""
+jira_site=""
+gitlab_group=""
+gitlab_group_set=false
+issue_prefixes=""
+issue_prefixes_set=false
+while (($#)); do
+  case "$1" in
+    --configure | --enable | --disable | --probe | --uninstall)
+      [[ -z "$mode" ]] || usage
+      mode=${1#--}
+      ;;
+    --with-model) with_model=true ;;
+    --force) force=true ;;
+    --label | --gitlab-user | --jira-email | --jira-site | --gitlab-group | --issue-prefixes)
+      (($# >= 2)) || usage
+      case "$1" in
+        --jira-site) jira_site=$2 ;;
+        --gitlab-group)
+          gitlab_group=$2
+          gitlab_group_set=true
+          ;;
+        --issue-prefixes)
+          issue_prefixes=$2
+          issue_prefixes_set=true
+          ;;
+        --label) label=$2 ;;
+        --gitlab-user) gitlab_user=$2 ;;
+        --jira-email) jira_email=$2 ;;
+      esac
+      shift
+      ;;
+    *) usage ;;
+  esac
+  shift
+done
+[[ -n "$mode" ]] || usage
+[[ "$with_model" == false || "$mode" == enable ]] || usage
+[[ "$force" == false && -z "$gitlab_user$jira_email$jira_site$gitlab_group$issue_prefixes" || "$mode" == configure ]] || usage
+[[ "$label" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*\.board-reconciler$ ]] || die "--label must be a reverse-DNS name ending in .board-reconciler"
+
+identity_file="$HOME/.config/todo-board/reconciler.json"
+
+if [[ "$mode" == configure ]]; then
+  for command in glab jq security; do
+    need "$command"
+  done
+  if [[ -z "$gitlab_user" ]]; then
+    gitlab_user=$(glab api --method GET --hostname gitlab.com user 2>/dev/null | jq -r '.username // empty') ||
+      gitlab_user=""
+    [[ -n "$gitlab_user" ]] || die "could not read your GitLab username; run 'glab auth login --hostname gitlab.com' or pass --gitlab-user"
+  fi
+  if [[ -z "$jira_email" ]]; then
+    jira_email=$(security find-generic-password -s atlassian-api-token 2>/dev/null |
+      sed -n 's/^[[:space:]]*"acct"<blob>="\(.*\)"$/\1/p' | head -1) || jira_email=""
+    [[ -n "$jira_email" ]] || die "no Keychain item with service atlassian-api-token; add your Jira token first or pass --jira-email"
+  fi
+  existing="{}"
+  if [[ -e "$identity_file" ]]; then
+    existing=$(jq -c . "$identity_file" 2>/dev/null) || existing="{}"
+  fi
+  if [[ -z "$jira_site" ]]; then
+    jira_site=$(jq -r '.jiraSite // empty' <<<"$existing")
+    [[ -n "$jira_site" ]] || die "pass --jira-site, the bare hostname of your Jira (for example example.atlassian.net)"
+  fi
+  if [[ "$gitlab_group_set" == false ]]; then
+    gitlab_group=$(jq -r '.gitlabGroup // empty' <<<"$existing")
+  fi
+  if [[ "$issue_prefixes_set" == false ]]; then
+    issue_prefixes=$(jq -r '(.issuePrefixes // []) | join(",")' <<<"$existing")
+  fi
+  [[ "$gitlab_user" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$ ]] || die "invalid GitLab username: $gitlab_user"
+  [[ "$jira_email" =~ ^[^[:space:]@]+@[^[:space:]@]+$ ]] || die "invalid Jira email: $jira_email"
+  [[ "$jira_site" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || die "invalid --jira-site (bare hostname, no scheme or path): $jira_site"
+  [[ -z "$gitlab_group" || "$gitlab_group" =~ ^[A-Za-z0-9][A-Za-z0-9_./-]*$ ]] || die "invalid --gitlab-group: $gitlab_group"
+  prefixes_json="[]"
+  if [[ -n "$issue_prefixes" ]]; then
+    [[ "$issue_prefixes" =~ ^[A-Z][A-Z0-9_]*(,[A-Z][A-Z0-9_]*)*$ ]] ||
+      die "invalid --issue-prefixes (comma-separated uppercase Jira project keys, for example PROJ,OPS): $issue_prefixes"
+    prefixes_json=$(jq -cn --arg p "$issue_prefixes" '$p | split(",")')
+  fi
+  new_identity=$(jq -cn --arg g "$gitlab_user" --arg j "$jira_email" --arg s "$jira_site" --arg o "$gitlab_group" --argjson p "$prefixes_json" \
+    '{gitlabUser: $g, jiraEmail: $j, jiraSite: $s} + (if $o == "" then {} else {gitlabGroup: $o} end) + (if $p == [] then {} else {issuePrefixes: $p} end)')
+  if [[ -e "$identity_file" ]]; then
+    current=$(jq -c . "$identity_file" 2>/dev/null) || current=""
+    if [[ "$current" == "$new_identity" ]]; then
+      printf 'config unchanged: GitLab %s, Jira %s at %s\nfile: %s\n' "$gitlab_user" "$jira_email" "$jira_site" "$identity_file"
+      exit 0
+    fi
+    [[ "$force" == true ]] || die "$identity_file already holds ${current:-unreadable data}; rerun with --force to replace it"
+  fi
+  mkdir -p "$(dirname "$identity_file")"
+  chmod 0700 "$(dirname "$identity_file")"
+  temporary_identity=$(mktemp "$(dirname "$identity_file")/.reconciler.XXXXXX")
+  printf '%s\n' "$new_identity" >"$temporary_identity"
+  chmod 0600 "$temporary_identity"
+  mv -f "$temporary_identity" "$identity_file"
+  printf 'config saved: GitLab %s, Jira %s at %s\nfile: %s\n' "$gitlab_user" "$jira_email" "$jira_site" "$identity_file"
+  exit 0
+fi
+
+for command in curl glab jq launchctl plutil security; do
+  need "$command"
+done
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+source_bin="${BOARD_RECONCILER_SOURCE:-$script_dir/../bin/board-reconciler}"
+domain="gui/$(id -u)"
+service="$domain/$label"
+launch_agents="$HOME/Library/LaunchAgents"
+plist="$launch_agents/$label.plist"
+bin_dir="$HOME/.local/bin"
+bin="$bin_dir/board-reconciler"
+state_dir="$HOME/.local/state/todo-board"
+work_dir="$state_dir/board-reconciler-run"
+log_dir="$HOME/.local/log"
+log_file="$log_dir/board-reconciler.log"
+launchd_log="$log_dir/board-reconciler.launchd.log"
+todo_url="${TODO_URL:-http://127.0.0.1:7337}"
+todo_url="${todo_url%/}"
+glab_bin=$(command -v glab)
+trigger_xml='  <key>StartInterval</key><integer>60</integer>'
+stdout_path="$launchd_log"
+path_value="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+[[ ":$path_value:" == *":$(dirname "$glab_bin"):"* ]] || path_value="$(dirname "$glab_bin"):$path_value"
+
+[[ "$todo_url" =~ ^http://(127\.0\.0\.1|localhost)(:[0-9]+)?$ ]] || die "TODO_URL must be a loopback http origin"
+[[ "$glab_bin" == /* && -x "$glab_bin" ]] || die "glab must resolve to an absolute executable path"
+
+if [[ "$mode" != probe ]]; then
+  for other in "$launch_agents"/*.board-reconciler.plist; do
+    [[ -e "$other" && "$other" != "$plist" ]] || continue
+    die "another reconciler agent is installed at $other; pass --label $(basename "$other" .plist) to manage that one"
+  done
+fi
+
+if [[ "$mode" == uninstall ]]; then
+  if launchctl print "$service" >/dev/null 2>&1; then
+    launchctl bootout "$service"
+  fi
+  rm -f -- "$plist" "$bin"
+  printf 'removed %s and %s (state, logs and config kept)\n' "$label" "$bin"
+  exit 0
+fi
+
+preflight() {
+  local status
+  status=$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' "$todo_url/api/tasks") ||
+    die "board unreachable at $todo_url"
+  [[ "$status" == 200 ]] || die "board returned HTTP $status for /api/tasks"
+  glab auth status --hostname gitlab.com >/dev/null 2>&1 || die "glab is not authenticated for gitlab.com"
+  [[ -r "$identity_file" ]] || die "no reconciler config at $identity_file; run scripts/install-board-reconciler --configure"
+  jira_email=$(jq -er '.jiraEmail | select(type == "string" and length > 0)' "$identity_file" 2>/dev/null) ||
+    die "$identity_file has no jiraEmail; run scripts/install-board-reconciler --configure --force"
+  jq -e '.gitlabUser | select(type == "string" and length > 0)' "$identity_file" >/dev/null 2>&1 ||
+    die "$identity_file has no gitlabUser; run scripts/install-board-reconciler --configure --force"
+  jq -e '.jiraSite | select(type == "string" and length > 0)' "$identity_file" >/dev/null 2>&1 ||
+    die "$identity_file has no jiraSite; run scripts/install-board-reconciler --configure --jira-site HOST --force"
+  security find-generic-password -a "$jira_email" -s atlassian-api-token >/dev/null 2>&1 ||
+    die "Jira token for $jira_email not found in the login Keychain (service atlassian-api-token)"
+  if [[ "$with_model" == true ]]; then
+    need claude
+    [[ "$(claude --version)" == "2.1.285 (Claude Code)" ]] ||
+      die "model assistance is verified only for Claude Code 2.1.285; install without --with-model"
+    path_value="$(dirname "$(command -v claude)"):$path_value"
+  fi
+}
+
+write_plist() {
+  local target=$1 program_arguments="" argument
+  shift
+  for argument in "$@"; do
+    program_arguments+="    <string>$(xml_escape "$argument")</string>"$'\n'
+  done
+  cat >"$target" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$(xml_escape "$label")</string>
+  <key>ProgramArguments</key>
+  <array>
+$program_arguments  </array>
+  <key>WorkingDirectory</key><string>$(xml_escape "$work_dir")</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>$(xml_escape "$path_value")</string>
+  </dict>
+$trigger_xml
+  <key>StandardOutPath</key><string>$(xml_escape "$stdout_path")</string>
+  <key>StandardErrorPath</key><string>$(xml_escape "$launchd_log")</string>
+</dict>
+</plist>
+EOF
+  plutil -lint "$target" >/dev/null || die "generated plist failed plutil -lint"
+}
+
+if [[ "$mode" == probe ]]; then
+  [[ -x "$bin" ]] || die "install first; $bin is missing"
+  preflight
+  label="$label.probe"
+  service="$domain/$label"
+  probe_dir=$(mktemp -d "$state_dir/probe.XXXXXX")
+  launchd_log="$probe_dir/stderr.log"
+  stdout_path="$probe_dir/result.json"
+  work_dir="$probe_dir"
+  trigger_xml='  <key>RunAtLoad</key><true/>'
+  write_plist "$probe_dir/$label.plist" "$bin" --dry-run --no-llm --todo-url "$todo_url" --state-path "$probe_dir/state.json"
+  if launchctl print "$service" >/dev/null 2>&1; then
+    launchctl bootout "$service"
+  fi
+  launchctl bootstrap "$domain" "$probe_dir/$label.plist"
+  for _ in $(seq 1 "${PROBE_WAIT_SECONDS:-150}"); do
+    if launchctl print "$service" 2>/dev/null | grep -q 'last exit code = [0-9]'; then
+      exit_code=$(launchctl print "$service" | sed -n 's/.*last exit code = \([0-9]*\).*/\1/p' | head -1)
+      launchctl bootout "$service"
+      printf 'probe exit code: %s\nresult: %s/result.json\nstderr: %s\n' "$exit_code" "$probe_dir" "$launchd_log"
+      exit 0
+    fi
+    sleep 1
+  done
+  printf 'probe still running after %ss. Look for a macOS Keychain prompt before doing anything else.\n' \
+    "${PROBE_WAIT_SECONDS:-150}"
+  printf 'the probe stays loaded; remove it with: launchctl bootout %s\n' "$service"
+  exit 2
+fi
+
+[[ -x "$source_bin" ]] || die "build first (make build-reconciler); $source_bin is not executable"
+preflight
+mkdir -p "$launch_agents" "$bin_dir" "$log_dir" "$work_dir"
+chmod 0700 "$state_dir" "$work_dir"
+
+backup_dir=$(mktemp -d "$state_dir/install-backup.XXXXXX")
+had_bin=false had_plist=false was_loaded=false
+[[ -e "$bin" ]] && cp -p "$bin" "$backup_dir/bin" && had_bin=true
+[[ -e "$plist" ]] && cp -p "$plist" "$backup_dir/plist" && had_plist=true
+launchctl print "$service" >/dev/null 2>&1 && was_loaded=true
+
+restore() {
+  printf 'install-board-reconciler: %s; restoring the previous installation\n' "$1" >&2
+  if launchctl print "$service" >/dev/null 2>&1; then
+    launchctl bootout "$service" || printf 'install-board-reconciler: bootout during restore failed\n' >&2
+  fi
+  if [[ "$had_bin" == true ]]; then cp -p "$backup_dir/bin" "$bin"; else rm -f "$bin"; fi
+  if [[ "$had_plist" == true ]]; then cp -p "$backup_dir/plist" "$plist"; else rm -f "$plist"; fi
+  if [[ "$was_loaded" == true && "$had_plist" == true ]]; then
+    launchctl enable "$service" || printf 'install-board-reconciler: could not re-enable previous agent\n' >&2
+    launchctl bootstrap "$domain" "$plist" || printf 'install-board-reconciler: could not reload previous agent\n' >&2
+  fi
+  exit 1
+}
+
+arguments=("$bin" --scheduled --todo-url "$todo_url" --log-file "$log_file")
+[[ "$with_model" == true ]] || arguments+=(--no-llm)
+temporary_plist=$(mktemp "$launch_agents/.board-reconciler.XXXXXX")
+temporary_bin=$(mktemp "$bin_dir/.board-reconciler.XXXXXX")
+trap 'rm -f "$temporary_plist" "$temporary_bin"' EXIT
+write_plist "$temporary_plist" "${arguments[@]}"
+cp "$source_bin" "$temporary_bin"
+chmod 0755 "$temporary_bin"
+"$temporary_bin" --status --todo-url "$todo_url" >/dev/null || die "new binary failed --status; nothing installed"
+
+if [[ "$was_loaded" == true ]]; then
+  launchctl bootout "$service" || restore "bootout of the running agent failed"
+fi
+chmod 0644 "$temporary_plist"
+mv -f "$temporary_bin" "$bin"
+mv -f "$temporary_plist" "$plist"
+
+if [[ "$mode" == disable ]]; then
+  launchctl disable "$service" || restore "launchctl disable failed"
+  launchctl print-disabled "$domain" | grep -q "\"$label\" => disabled" || restore "disable read-back failed"
+  if launchctl print "$service" >/dev/null 2>&1; then restore "agent is still loaded"; fi
+  rm -rf "$backup_dir"
+  printf 'installed %s (disabled, not loaded)\nplist: %s\nprogram: %s\n' "$label" "$plist" "$bin"
+  exit 0
+fi
+
+launchctl enable "$service" || restore "launchctl enable failed"
+launchctl bootstrap "$domain" "$plist" || restore "launchctl bootstrap failed"
+readback=$(launchctl print "$service" 2>/dev/null) || restore "agent missing after bootstrap"
+grep -q 'run interval = 60 seconds' <<<"$readback" || restore "read-back is missing the 60 second interval"
+grep -qF "program = $bin" <<<"$readback" || restore "read-back program path differs"
+"$bin" --status --todo-url "$todo_url" >/dev/null || restore "installed binary failed --status"
+rm -rf "$backup_dir"
+printf 'installed %s (enabled)\nplist: %s\nprogram: %s\nlog: %s\nmodel: %s\n' \
+  "$label" "$plist" "$bin" "$log_file" "$([[ "$with_model" == true ]] && echo enabled || echo disabled)"

@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TODO_URL="${TODO_URL:-http://127.0.0.1:7337}"
+TODO_URL="${TODO_URL%/}"
+NOW_EPOCH="${BOARD_NOTIFIER_NOW_EPOCH:-$(date +%s)}"
+TODAY="$(date +%F)"
+WEEKDAY="$(date +%u)"
+ACTOR="board-notifier"
+
+die() {
+  printf 'board-notifier: %s\n' "$*" >&2
+  exit 1
+}
+
+need() {
+  command -v "$1" >/dev/null 2>&1 || die "required command '$1' is not installed"
+}
+
+need curl
+need jq
+need osascript
+[[ "$NOW_EPOCH" =~ ^[0-9]+$ ]] || die "BOARD_NOTIFIER_NOW_EPOCH must be a positive integer"
+
+dry_run=false
+force_now=false
+for argument in "$@"; do
+  case "$argument" in
+    --dry-run) dry_run=true ;;
+    --now) force_now=true ;;
+    *) die "usage: scripts/board-notifier [--dry-run] [--now]" ;;
+  esac
+done
+
+tasks_file=$(mktemp "${TMPDIR:-/tmp}/board-notifier-tasks.XXXXXX")
+response_file=$(mktemp "${TMPDIR:-/tmp}/board-notifier-response.XXXXXX")
+cleanup() {
+  rm -f "$tasks_file" "$response_file"
+}
+trap cleanup EXIT
+
+if ! status=$(curl -sS --max-time 15 -o "$tasks_file" -w '%{http_code}' \
+  -H 'Accept: application/json' "$TODO_URL/api/tasks"); then
+  die "GET /api/tasks failed: board unreachable at $TODO_URL"
+fi
+if [[ "$status" -lt 200 || "$status" -ge 300 ]]; then
+  message=$(jq -r '.error // empty' "$tasks_file" 2>/dev/null || true)
+  [[ -n "$message" ]] || message=$(tr '\n' ' ' < "$tasks_file")
+  die "GET /api/tasks failed with HTTP $status${message:+: $message}"
+fi
+if ! jq -e '
+  def valid_time:
+    type == "string" and (try (sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 | type == "number") catch false);
+  (.tasks | type) == "array" and
+  all(.tasks[];
+    type == "object" and
+    (.id | type) == "string" and (.id | length) > 0 and
+    (.title | type) == "string" and
+    (.lane | type) == "string" and
+    (.kind | type) == "string" and
+    (.revision | type) == "number" and .revision >= 1 and .revision == (.revision | floor) and
+    (.notes | type) == "string" and
+    (.updatedAt | valid_time) and
+    (.subtasks | type) == "array" and
+    all(.subtasks[];
+      (.id | type) == "string" and (.id | length) > 0 and
+      (.lane | type) == "string" and (.done | type) == "boolean"))
+' "$tasks_file" >/dev/null 2>&1; then
+  die "GET /api/tasks returned invalid or unsafe task data"
+fi
+
+notify() {
+  local title=$1
+  local body=$2
+  if [[ "$dry_run" == true ]]; then
+    jq -cn --arg title "$title" --arg body "$body" \
+      '{type:"notification",title:$title,body:$body}'
+    return
+  fi
+  if ! osascript - "$title" "$body" <<'APPLESCRIPT'
+on run argv
+  display notification (item 2 of argv) with title (item 1 of argv)
+end run
+APPLESCRIPT
+  then
+    die "notification failed: $title"
+  fi
+  jq -cn --arg title "$title" '{type:"notification",title:$title,status:"sent"}'
+}
+
+close_card() {
+  local task_json=$1
+  local log_text=$2
+  local id revision envelope operation_count
+  id=$(jq -r '.id' <<<"$task_json")
+  revision=$(jq -r '.revision' <<<"$task_json")
+  envelope=$(jq -cn --argjson task "$task_json" --arg text "$log_text" '
+    {source:"board-notifier", ops:
+      ([{op:"work_log", id:$task.id, expectedRevision:$task.revision,
+         workLog:{kind:"progress", text:$text}}] +
+       [$task.subtasks[] | select(.lane != "done" or .done != true) |
+         {op:"check", id:$task.id, subtaskId:.id, done:true,
+          expectedRevision:$task.revision}] +
+       [{op:"patch", id:$task.id, lane:"done", expectedRevision:$task.revision}])}
+  ')
+  operation_count=$(jq '.ops | length' <<<"$envelope")
+  if [[ "$dry_run" == true ]]; then
+    jq -cn --arg id "$id" --argjson envelope "$envelope" \
+      '{type:"mutation",id:$id,envelope:$envelope}'
+    return 0
+  fi
+  if ! status=$(printf '%s' "$envelope" | curl -sS --max-time 15 -o "$response_file" -w '%{http_code}' \
+    -X POST -H 'Accept: application/json' -H 'Content-Type: application/json' \
+    -H "X-Actor: $ACTOR" --data-binary @- "$TODO_URL/api/ops"); then
+    printf 'board-notifier: card %s: POST /api/ops failed: board unreachable\n' "$id" >&2
+    return 1
+  fi
+  if [[ "$status" -lt 200 || "$status" -ge 300 ]]; then
+    message=$(jq -r '.error // empty' "$response_file" 2>/dev/null || true)
+    [[ -n "$message" ]] || message=$(tr '\n' ' ' < "$response_file")
+    printf 'board-notifier: card %s: POST /api/ops failed with HTTP %s%s\n' \
+      "$id" "$status" "${message:+: $message}" >&2
+    return 1
+  fi
+  if ! jq -e --arg id "$id" --argjson expected "$operation_count" '
+    .applied == $expected and (.tasks | type) == "array" and
+    any(.tasks[]; .id == $id and .lane == "done")
+  ' "$response_file" >/dev/null 2>&1; then
+    printf 'board-notifier: card %s: POST /api/ops returned an invalid success response\n' "$id" >&2
+    return 1
+  fi
+  jq -cn --arg id "$id" --argjson applied "$operation_count" \
+    '{type:"mutation",id:$id,status:"applied",operations:$applied}'
+}
+
+if [[ "$force_now" == true || "$WEEKDAY" == "1" ]]; then
+  blocked_body=$(jq -r '
+    [.tasks | sort_by(.id)[] | select(.lane == "blocked") |
+      (.notes | try capture("Blocked:[[:space:]]*(?<reason>[^\\r\\n]+)"; "i").reason catch "") as $reason |
+      "• " + .title + (if $reason == "" then "" else ", " + $reason end)] |
+    join("\n")
+  ' "$tasks_file")
+  if [[ -n "$blocked_body" ]]; then
+    notify "Blocked" "$blocked_body"
+  fi
+fi
+
+if ! jq -er '
+  [.tasks[].notes | split("\n")[] |
+    try capture("^[[:space:]]*remind:[[:space:]]*(?<value>[0-9]{4}-[0-9]{2}-[0-9]{2})[[:space:]]*$"; "i").value catch empty] |
+  all(.[]; try ((. + "T00:00:00Z" | fromdateiso8601) | type == "number") catch false)
+' "$tasks_file" >/dev/null; then
+  die "task notes contain an invalid ISO reminder date"
+fi
+jq -c --arg today "$TODAY" --argjson weekly "$([[ "$force_now" == true || "$WEEKDAY" == "1" ]] && echo true || echo false)" '
+  .tasks | sort_by(.id)[] | select(.lane != "done") |
+  [(.notes | split("\n")[] |
+    try capture("^[[:space:]]*remind:[[:space:]]*(?<value>daily|weekly|[0-9]{4}-[0-9]{2}-[0-9]{2})[[:space:]]*$"; "i").value catch empty |
+    ascii_downcase)] as $markers |
+  select(any($markers[];
+    . == "daily" or (. == "weekly" and $weekly) or
+    (test("^[0-9]{4}-") and . <= $today)))
+' "$tasks_file" | while IFS= read -r task_json; do
+  notify "Reminder" "$(jq -r '.title + " (" + .id + ")"' <<<"$task_json")"
+done
+
+jq -c --argjson now "$NOW_EPOCH" '
+  def epoch: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
+  .tasks | sort_by(.id)[] |
+  select(.kind == "probe" and .lane != "done" and ($now - (.updatedAt | epoch)) > 86400)
+' "$tasks_file" | while IFS= read -r task_json; do
+  close_card "$task_json" "auto-closed: idle probe" || true
+done
+
+stale_body=$(jq -r --argjson now "$NOW_EPOCH" '
+  def epoch: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
+  [.tasks | sort_by(.id)[] |
+    select(.kind == "work" and .lane == "doing" and ($now - (.updatedAt | epoch)) > 432000) |
+    "• " + .title + " (" + .id + ")"] |
+  join("\n")
+' "$tasks_file")
+if [[ -n "$stale_body" ]]; then
+  notify "Stale in progress" "$stale_body"
+fi

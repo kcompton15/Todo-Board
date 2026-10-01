@@ -1,0 +1,2928 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>Todo Board</title>
+    <style>
+      :root {
+        --bg: #edf0f4;
+        --surface: #fff;
+        --surface-2: #f6f7f9;
+        --surface-3: #eceff3;
+        --ink: #171b23;
+        --muted: #697386;
+        --line: #d8dde5;
+        --line-strong: #bdc5d0;
+        --accent: #235ed8;
+        --accent-soft: #e8efff;
+        --danger: #c93e36;
+        --ok: #168454;
+        --shadow: 0 12px 34px rgba(20, 30, 46, 0.12);
+        --radius: 14px;
+        --backlog: #7a8493;
+        --today: #3267e8;
+        --doing: #d98016;
+        --blocked: #dc4139;
+        --done: #169158;
+        --p1: #dc4139;
+        --p2: #d98016;
+        --p3: #7a8493;
+        --sans:
+          Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+        --mono: "SFMono-Regular",Consolas,monospace;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) {
+          --bg: #0c1015;
+          --surface: #151a21;
+          --surface-2: #1b212a;
+          --surface-3: #232a34;
+          --ink: #f0f3f7;
+          --muted: #99a4b3;
+          --line: #2c343f;
+          --line-strong: #414b59;
+          --accent: #70a0ff;
+          --accent-soft: #1b315b;
+          --danger: #f06b63;
+          --ok: #4bcb89;
+          --shadow: 0 16px 38px rgba(0, 0, 0, 0.34);
+        }
+      }
+      :root[data-theme="dark"] {
+        --bg: #0c1015;
+        --surface: #151a21;
+        --surface-2: #1b212a;
+        --surface-3: #232a34;
+        --ink: #f0f3f7;
+        --muted: #99a4b3;
+        --line: #2c343f;
+        --line-strong: #414b59;
+        --accent: #70a0ff;
+        --accent-soft: #1b315b;
+        --danger: #f06b63;
+        --ok: #4bcb89;
+        --shadow: 0 16px 38px rgba(0, 0, 0, 0.34);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html, body {
+        margin: 0;
+        min-height: 100%;
+      }
+      body {
+        overflow-x: hidden;
+        background: var(--bg);
+        color: var(--ink);
+        font: 14px/1.45 var(--sans);
+      }
+      button, input, textarea, select {
+        font: inherit;
+        color: inherit;
+      }
+      button {
+        cursor: pointer;
+      }
+      button:focus-visible,
+      input:focus-visible,
+      textarea:focus-visible,
+      select:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 30;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-height: 62px;
+        padding: 10px 16px;
+        background: color-mix(in srgb, var(--surface) 92%, transparent);
+        border-bottom: 1px solid var(--line);
+        backdrop-filter: blur(15px);
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 780;
+        letter-spacing: -0.025em;
+        white-space: nowrap;
+      }
+      .brandmark {
+        position: relative;
+        width: 20px;
+        height: 20px;
+        border-radius: 6px;
+        background: var(--accent);
+        box-shadow: inset 0 0 0 5px
+          color-mix(in srgb, var(--surface) 40%, transparent);
+      }
+      .brandmark::after {
+        content: "";
+        position: absolute;
+        right: -3px;
+        bottom: -3px;
+        width: 7px;
+        height: 7px;
+        border: 2px solid var(--surface);
+        border-radius: 50%;
+        background: var(--ok);
+      }
+      .clock, .status {
+        color: var(--muted);
+        font: 11px var(--mono);
+        white-space: nowrap;
+      }
+      .dot {
+        display: inline-block;
+        width: 7px;
+        height: 7px;
+        margin-right: 5px;
+        border-radius: 50%;
+        background: var(--backlog);
+      }
+      .dot.live {
+        background: var(--ok);
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 14%, transparent);
+      }
+      .dot.off {
+        background: var(--danger);
+      }
+      .spacer {
+        flex: 1;
+      }
+      .controls {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        min-width: 0;
+      }
+      .btn, .select, .search {
+        min-height: 36px;
+        border: 1px solid var(--line-strong);
+        border-radius: 9px;
+        background: var(--surface);
+      }
+      .btn {
+        padding: 6px 11px;
+        transition:
+          background 0.14s ease,
+          border-color 0.14s ease,
+          transform 0.14s ease;
+      }
+      .btn:hover {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+      }
+      .btn:active {
+        transform: translateY(1px);
+      }
+      .btn.primary {
+        color: #fff;
+        background: #235ed8;
+        border-color: #235ed8;
+        font-weight: 700;
+      }
+      .btn.danger {
+        color: var(--danger);
+      }
+      .btn.active {
+        color: var(--accent);
+        background: var(--accent-soft);
+        border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+      }
+      .segmented {
+        display: flex;
+        padding: 2px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--surface-2);
+      }
+      .segmented .btn {
+        min-height: 29px;
+        padding: 3px 10px;
+        border: 0;
+        background: transparent;
+      }
+      .segmented .btn.active {
+        background: var(--surface);
+        box-shadow: 0 1px 5px rgba(0, 0, 0, 0.1);
+      }
+      .search {
+        width: min(205px, 18vw);
+        padding: 7px 10px;
+        outline: 0;
+      }
+      .select {
+        max-width: 175px;
+        padding: 6px 28px 6px 9px;
+        outline: 0;
+      }
+      .search:focus, .select:focus {
+        border-color: var(--accent);
+      }
+      .banner {
+        display: none;
+        padding: 9px 16px;
+        border-bottom: 1px solid var(--line);
+        background: var(--accent-soft);
+      }
+      .banner.show {
+        display: block;
+      }
+      .summary {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        min-height: 42px;
+        padding: 8px 16px 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .summary strong {
+        color: var(--ink);
+        font-size: 13px;
+      }
+      .summary .legend {
+        margin-left: auto;
+      }
+      .workspace {
+        padding: 12px 16px 24px;
+        animation: board-enter 0.28s ease-out both;
+      }
+      .board-scroll {
+        overflow-x: auto;
+        overscroll-behavior-x: contain;
+        padding: 0 0 9px;
+      }
+      .board {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        min-width: 1288px;
+      }
+      .project-section {
+        margin-bottom: 20px;
+        border-top: 1px solid var(--line);
+      }
+      .project-head {
+        position: sticky;
+        left: 0;
+        z-index: 3;
+        display: flex;
+        align-items: baseline;
+        gap: 9px;
+        width: fit-content;
+        padding: 13px 5px 9px;
+        background: var(--bg);
+      }
+      .project-head h2 {
+        margin: 0;
+        font-size: 15px;
+        letter-spacing: -0.02em;
+      }
+      .project-head span {
+        color: var(--muted);
+        font: 11px var(--mono);
+      }
+      .lane {
+        flex: 1 0 248px;
+        width: 308px;
+        max-height: calc(100vh - 158px);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: color-mix(in srgb, var(--surface) 72%, var(--bg));
+      }
+      .grouped .lane {
+        max-height: 520px;
+      }
+      .lane.dragover {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px
+          color-mix(in srgb, var(--accent) 20%, transparent);
+      }
+      .lane-head {
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 11px;
+        border-bottom: 1px solid var(--line);
+        background: color-mix(in srgb, var(--surface) 72%, transparent);
+      }
+      .swatch {
+        width: 8px;
+        height: 8px;
+        border-radius: 3px;
+      }
+      .lane-name {
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.075em;
+        text-transform: uppercase;
+      }
+      .count {
+        margin-left: auto;
+        min-width: 22px;
+        padding: 2px 7px;
+        border-radius: 99px;
+        background: var(--surface-3);
+        color: var(--muted);
+        font: 10px var(--mono);
+        text-align: center;
+      }
+      .lane-body {
+        min-height: 0;
+        flex: 1 1 auto;
+        overflow-y: auto;
+        scrollbar-gutter: stable;
+        scrollbar-color: var(--line-strong) transparent;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 8px;
+        scrollbar-width: thin;
+      }
+      .empty {
+        padding: 17px 7px;
+        color: var(--muted);
+        font-size: 12px;
+        text-align: center;
+      }
+      .lane-add {
+        flex: 0 0 auto;
+        padding: 7px;
+        border-top: 1px solid var(--line);
+      }
+      .lane-add input {
+        width: 100%;
+        padding: 8px 9px;
+        border: 1px solid transparent;
+        border-radius: 8px;
+        background: var(--surface-2);
+        outline: 0;
+      }
+      .lane-add input:focus {
+        border-color: var(--accent);
+      }
+      .card {
+        flex: 0 0 auto;
+        --priority: var(--p3);
+        position: relative;
+        border: 1px solid var(--line);
+        border-left: 3px solid var(--priority);
+        border-radius: 11px;
+        background: var(--surface);
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+        overflow: hidden;
+        transition:
+          transform 0.15s ease,
+          box-shadow 0.15s ease,
+          border-color 0.15s ease;
+      }
+      .card:hover {
+        transform: translateY(-1px);
+        box-shadow: var(--shadow);
+      }
+      .card.expanded {
+        border-color: color-mix(in srgb, var(--accent) 38%, var(--line));
+        box-shadow: 0 10px 26px rgba(20, 30, 46, 0.1);
+      }
+      .card.dragging, .subtask-row.dragging {
+        opacity: 0.42;
+        transform: scale(0.985);
+      }
+      .card.drop-before::before, .card.drop-after::after {
+        content: "";
+        position: absolute;
+        z-index: 3;
+        left: 7px;
+        right: 7px;
+        height: 3px;
+        border-radius: 3px;
+        background: var(--accent);
+      }
+      .card.drop-before::before {
+        top: -5px;
+      }
+      .card.drop-after::after {
+        bottom: -5px;
+      }
+      .card.p1 {
+        --priority: var(--p1);
+      }
+      .card.p2 {
+        --priority: var(--p2);
+      }
+      .card.p3 {
+        --priority: var(--p3);
+      }
+      .card.done .card-title {
+        color: var(--muted);
+        text-decoration: line-through;
+      }
+      .card-head {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 8px;
+        padding: 10px 10px 8px;
+      }
+      .disclosure {
+        align-self: start;
+        width: 25px;
+        height: 25px;
+        display: grid;
+        place-items: center;
+        padding: 0;
+        border: 0;
+        border-radius: 7px;
+        background: var(--surface-2);
+        color: var(--muted);
+      }
+      .disclosure:hover {
+        color: var(--accent);
+        background: var(--accent-soft);
+      }
+      .disclosure span {
+        display: block;
+        transition: transform 0.16s ease;
+      }
+      .disclosure[aria-expanded="true"] span {
+        transform: rotate(90deg);
+      }
+      .card-copy {
+        min-width: 0;
+        cursor: grab;
+      }
+      .card-title {
+        display: block;
+        width: 100%;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+        font-weight: 680;
+        line-height: 1.32;
+        overflow-wrap: anywhere;
+      }
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+        margin-top: 7px;
+      }
+      .chip {
+        max-width: 168px;
+        overflow: hidden;
+        padding: 1px 6px;
+        border: 1px solid var(--line-strong);
+        border-radius: 99px;
+        color: var(--muted);
+        font: 10px var(--mono);
+        white-space: nowrap;
+        text-overflow: ellipsis;
+      }
+      .chip.project {
+        color: var(--accent);
+        border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+      }
+      .chip.kind {
+        color: var(--ok);
+        border-color: color-mix(in srgb, var(--ok) 42%, var(--line));
+      }
+      .chip.source {
+        border-style: dashed;
+      }
+      .progress {
+        height: 3px;
+        margin: 0 10px 8px 43px;
+        overflow: hidden;
+        border-radius: 3px;
+        background: var(--surface-3);
+      }
+      .progress i {
+        display: block;
+        height: 100%;
+        background: var(--ok);
+        transition: width 0.22s ease;
+      }
+      .card-tools {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 0 10px 9px;
+      }
+      .tool-divider {
+        width: 1px;
+        height: 15px;
+        margin: 0 2px;
+        background: var(--line);
+      }
+      .mini {
+        min-width: 26px;
+        min-height: 25px;
+        padding: 2px 7px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: transparent;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .mini:hover {
+        color: var(--ink);
+        border-color: var(--accent);
+        background: var(--accent-soft);
+      }
+      .mini:disabled {
+        opacity: 0.28;
+        cursor: default;
+      }
+      .mini.label {
+        margin-left: auto;
+        padding-inline: 9px;
+      }
+      .mini.add-subtask {
+        margin-left: auto;
+        color: var(--accent);
+        font-size: 16px;
+        font-weight: 700;
+        line-height: 1;
+      }
+      .mini.add-subtask + .mini.label {
+        margin-left: 0;
+      }
+      .card-notes {
+        padding: 12px;
+        border-bottom: 1px solid var(--line);
+      }
+      .card-notes h3 {
+        margin: 0 0 8px;
+        font-size: 11px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      .card-notes p {
+        margin: 0;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        font-size: 12px;
+        line-height: 1.6;
+        user-select: text;
+      }
+      button:focus-visible, .lane-body:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: -2px;
+      }
+      .subtask-panel {
+        border-top: 1px solid var(--line);
+        background: var(--surface-2);
+      }
+      .subtask-panel.revealing {
+        animation: reveal 0.18s ease-out both;
+      }
+      .subtask-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 10px 6px;
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 760;
+        letter-spacing: 0.065em;
+        text-transform: uppercase;
+      }
+      .subtask-head span:last-child {
+        margin-left: auto;
+        font: 10px var(--mono);
+        letter-spacing: 0;
+        text-transform: none;
+      }
+      .subtask-list {
+        padding: 0 7px;
+      }
+      .subtask-row {
+        display: grid;
+        grid-template-columns: 14px 18px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 7px;
+        min-height: 39px;
+        padding: 6px 3px;
+        border-top: 1px solid var(--line);
+      }
+      .subtask-row:first-child {
+        border-top: 0;
+      }
+      .grip {
+        color: var(--line-strong);
+        font-size: 14px;
+        cursor: grab;
+        user-select: none;
+      }
+      .subcheck {
+        width: 16px !important;
+        height: 16px;
+        margin: 0 !important;
+        flex: 0 0 auto;
+        accent-color: var(--ok);
+      }
+      .subtask-title {
+        min-width: 0;
+        line-height: 1.3;
+        overflow-wrap: anywhere;
+      }
+      .subtask-row.done .subtask-title {
+        color: var(--muted);
+        text-decoration: line-through;
+      }
+      .sub-controls {
+        display: flex;
+        align-items: center;
+        gap: 3px;
+      }
+      .sub-lane {
+        width: 84px;
+        min-height: 26px;
+        padding: 3px 20px 3px 6px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: var(--surface);
+        color: var(--muted);
+        font-size: 10px;
+        outline: 0;
+      }
+      .sub-lane[data-lane="backlog"] {
+        color: var(--backlog);
+      }
+      .sub-lane[data-lane="today"] {
+        color: var(--today);
+      }
+      .sub-lane[data-lane="doing"] {
+        color: var(--doing);
+      }
+      .sub-lane[data-lane="blocked"] {
+        color: var(--blocked);
+      }
+      .sub-lane[data-lane="done"] {
+        color: var(--done);
+      }
+      .sub-move {
+        display: none;
+      }
+      .quick-sub {
+        padding: 7px;
+      }
+      .quick-sub input {
+        width: 100%;
+        padding: 7px 8px;
+        border: 1px solid transparent;
+        border-radius: 7px;
+        background: var(--surface);
+        outline: 0;
+        font-size: 12px;
+      }
+      .quick-sub input:focus {
+        border-color: var(--accent);
+      }
+      .scrim {
+        position: fixed;
+        inset: 0;
+        z-index: 40;
+        display: none;
+        background: rgba(5, 9, 15, 0.55);
+        backdrop-filter: blur(2px);
+      }
+      .scrim.show {
+        display: block;
+        animation: fade-in 0.16s ease-out both;
+      }
+      .drawer {
+        position: fixed;
+        inset: 0 0 0 auto;
+        z-index: 41;
+        width: min(500px, 100%);
+        display: flex;
+        flex-direction: column;
+        background: var(--surface);
+        border-left: 1px solid var(--line);
+        box-shadow: -22px 0 55px rgba(0, 0, 0, 0.18);
+        transform: translateX(101%);
+        transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+      }
+      .drawer.show {
+        transform: none;
+      }
+      .drawer-head, .drawer-foot {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 15px;
+        border-bottom: 1px solid var(--line);
+      }
+      .drawer-head b {
+        font-size: 12px;
+        letter-spacing: 0.065em;
+        text-transform: uppercase;
+      }
+      .drawer-body {
+        flex: 1;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+        padding: 16px;
+      }
+      .drawer-foot {
+        border-top: 1px solid var(--line);
+        border-bottom: 0;
+      }
+      .field label {
+        display: block;
+        margin-bottom: 5px;
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 760;
+        letter-spacing: 0.065em;
+        text-transform: uppercase;
+      }
+      .field > input, .field > textarea, .field > select {
+        width: 100%;
+        padding: 9px 10px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: var(--surface-2);
+        outline: 0;
+        resize: vertical;
+      }
+      .field > input:focus, .field > textarea:focus, .field > select:focus {
+        border-color: var(--accent);
+      }
+      .row {
+        display: flex;
+        gap: 11px;
+      }
+      .row > * {
+        flex: 1;
+        min-width: 0;
+      }
+      .drawer-subtask {
+        display: grid;
+        grid-template-columns: 18px minmax(0, 1fr) 104px 24px;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 0;
+        border-bottom: 1px dashed var(--line);
+      }
+      .drawer-subtask input[type="checkbox"] {
+        width: 16px !important;
+        height: 16px;
+        margin: 0;
+        accent-color: var(--ok);
+      }
+      .drawer-subtask .title {
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
+      .drawer-subtask.done .title {
+        color: var(--muted);
+        text-decoration: line-through;
+      }
+      .drawer-subtask select {
+        min-width: 0;
+        width: 104px;
+        padding: 5px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: var(--surface-2);
+        font-size: 11px;
+      }
+      .drawer-subtask button {
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: var(--muted);
+        font-size: 18px;
+      }
+      .hint {
+        color: var(--muted);
+        font-size: 11px;
+      }
+      @keyframes board-enter {
+        from {
+          opacity: 0;
+          transform: translateY(5px);
+        }
+      }
+      @keyframes reveal {
+        from {
+          opacity: 0;
+          transform: translateY(-4px);
+        }
+      }
+      @keyframes fade-in {
+        from {
+          opacity: 0;
+        }
+      }
+      @media (max-width: 1040px) {
+        .topbar {
+          align-items: flex-start;
+          flex-wrap: wrap;
+        }
+        .controls {
+          flex: 1 0 100%;
+          width: 100%;
+          order: 4;
+          overflow-x: auto;
+          padding-bottom: 1px;
+        }
+        .topbar > .spacer {
+          display: none;
+        }
+        .search {
+          width: 190px;
+        }
+        .summary .legend {
+          display: none;
+        }
+      }
+      @media (max-width: 600px) {
+        .topbar {
+          padding: 9px 10px;
+          align-items: center;
+        }
+        .brand span:last-child {
+          display: none;
+        }
+        .controls {
+          flex-wrap: wrap;
+          overflow: visible;
+        }
+        .controls .segmented {
+          flex: 0 0 auto;
+        }
+        .controls .search {
+          flex: 1 1 132px;
+          width: auto;
+          min-width: 0;
+        }
+        .controls .select {
+          flex: 1 1 150px;
+          max-width: none;
+        }
+        .controls > .btn {
+          flex: 1 0 auto;
+        }
+        .summary {
+          gap: 11px;
+          padding-left: 10px;
+          overflow-x: auto;
+          white-space: nowrap;
+        }
+        .workspace {
+          padding: 10px;
+        }
+        .lane {
+          flex: 0 0 88vw;
+          width: 88vw;
+          max-height: calc(100svh - 205px);
+        }
+        .card-tools {
+          padding-left: 10px;
+        }
+        .progress {
+          margin-left: 10px;
+        }
+        .subtask-row {
+          grid-template-columns: 12px 18px minmax(0, 1fr);
+        }
+        .sub-controls {
+          grid-column: 2 / -1;
+          padding: 0 0 3px 0;
+        }
+        .sub-lane {
+          flex: 1;
+          width: auto;
+        }
+        .sub-move {
+          display: block;
+        }
+        .drawer-subtask {
+          grid-template-columns: 18px minmax(0, 1fr) 24px;
+        }
+        .drawer-subtask select {
+          grid-column: 2 / 3;
+          width: 100%;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after {
+          animation-duration: 0.01ms !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+      .btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .notice {
+        padding: 12px;
+        border: 1px solid var(--line-strong);
+        border-radius: 10px;
+        background: var(--accent-soft);
+        overflow-wrap: anywhere;
+      }
+      .notice[hidden] {
+        display: none;
+      }
+      .activity-list {
+        list-style: none;
+        padding: 0;
+        margin: 10px 0;
+      }
+      .activity-list li {
+        padding: 12px 0;
+        border-bottom: 1px solid var(--line);
+        overflow-wrap: anywhere;
+      }
+      .activity-list small {
+        display: block;
+        color: var(--muted);
+        margin: 4px 0;
+      }
+      .activity-list ul {
+        padding-left: 18px;
+        font-size: 12px;
+      }
+      .activity-list ul li {
+        padding: 3px 0;
+        border: 0;
+      }
+      .activity-dialog {
+        width: min(680px, calc(100% - 24px));
+        max-height: 85vh;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--surface);
+        color: var(--ink);
+        padding: 20px;
+      }
+      .activity-dialog::backdrop {
+        background: #0007;
+      }
+      .incomplete {
+        color: var(--danger);
+        font-weight: 600;
+      }
+      .card.done:has(.incomplete) {
+        opacity: 1;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brandmark"></span><span>Todo Board</span>
+      </div>
+      <span class="clock" id="clock">--:--</span>
+      <span class="status"><span class="dot" id="dot"></span><span
+          id="statusText"
+        >connecting</span></span>
+      <span class="spacer"></span>
+      <div class="controls">
+        <div class="segmented" aria-label="Board view">
+          <button class="btn active" id="allView" type="button">
+            All work
+          </button>
+          <button class="btn" id="projectView" type="button">By project</button>
+        </div>
+        <div class="segmented" aria-label="Task view">
+          <button class="btn active" id="focusView" type="button">Focus</button>
+          <button class="btn" id="reviewsView" type="button">Reviews</button>
+          <button class="btn" id="everythingView" type="button">
+            Everything
+          </button>
+        </div>
+        <input
+          class="search"
+          id="search"
+          type="search"
+          placeholder="Search work"
+          aria-label="Search tasks and subtasks"
+        >
+        <select
+          class="select"
+          id="projectFilter"
+          aria-label="Filter by project"
+        >
+          <option value="">All projects</option>
+        </select>
+        <button class="btn" id="activityButton" type="button">Activity</button>
+        <button class="btn" id="standupButton" type="button">
+          Generate standup
+        </button>
+        <button class="btn" id="weeklyButton" type="button">
+          Weekly report
+        </button>
+        <button class="btn" id="doneToggle" type="button">Hide done</button>
+        <button class="btn" id="chimeBtn" type="button">Chime off</button>
+        <button class="btn" id="themeBtn" type="button">Theme</button>
+        <button class="btn primary" id="newTask" type="button">New task</button>
+      </div>
+    </header>
+    <div class="banner" id="banner" role="status"></div>
+    <div class="summary" id="summary"></div>
+    <main class="workspace" id="workspace"></main>
+
+    <dialog
+      id="activityDialog"
+      class="activity-dialog"
+      aria-labelledby="activityTitle"
+    >
+      <div class="drawer-head">
+        <b id="activityTitle">Board activity</b><span
+          class="spacer"
+        ></span><button class="btn" id="closeActivity" type="button">
+          Close activity
+        </button>
+      </div>
+      <p class="hint">
+        Client labels are self-reported. History starts with this upgrade; the
+        latest 1,000 task changes are retained.
+      </p>
+      <div id="boardActivity" aria-live="polite"></div>
+    </dialog>
+    <dialog
+      id="reportDialog"
+      class="activity-dialog"
+      aria-labelledby="reportTitle"
+    >
+      <div class="drawer-head">
+        <b id="reportTitle">Generate report</b><span
+          class="spacer"
+        ></span><button class="btn" id="closeReport" type="button">
+          Close
+        </button>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label for="reportStart">Start date</label><input
+            id="reportStart"
+            type="date"
+          >
+        </div>
+        <div class="field">
+          <label for="reportEnd">End date</label><input
+            id="reportEnd"
+            type="date"
+          >
+        </div>
+      </div>
+      <div class="field">
+        <label for="reportProjects">Projects</label><input
+          id="reportProjects"
+          placeholder="All projects; or comma-separated project names"
+        >
+      </div>
+      <p id="reportMessage" class="hint"></p>
+      <textarea
+        id="reportOutput"
+        rows="18"
+        aria-label="Editable generated report"
+      ></textarea>
+      <div class="drawer-foot">
+        <button class="btn primary" id="runReport" type="button">
+          Generate
+        </button><span class="spacer"></span><button
+          class="btn"
+          id="copyReport"
+          type="button"
+        >
+          Copy Markdown
+        </button>
+      </div>
+    </dialog>
+    <div class="scrim" id="scrim"></div>
+    <aside
+      class="drawer"
+      id="drawer"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Task details"
+      aria-hidden="true"
+    >
+      <div class="drawer-head">
+        <b id="drawerLabel">Task details</b><span class="spacer"></span><button
+          class="btn"
+          id="closeDrawer"
+          type="button"
+        >
+          Close
+        </button>
+      </div>
+      <div class="drawer-body">
+        <p id="drawerMessage" class="notice" role="alert" hidden></p>
+        <div id="editConflict" class="notice" role="status" hidden>
+          <p id="conflictMessage"></p>
+          <button class="btn" id="reloadTask" type="button">
+            Load latest task
+          </button>
+          <p class="hint">
+            Your draft is still here. Copy anything you want to keep before
+            loading the latest version.
+          </p>
+        </div>
+        <div id="completionNotice" class="notice" role="status" hidden></div>
+        <div class="field">
+          <label for="fTitle">Title</label><textarea
+            id="fTitle"
+            rows="2"
+          ></textarea>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label for="fLane">Lane</label><select id="fLane"></select>
+          </div>
+          <div class="field">
+            <label for="fPriority">Priority</label><select id="fPriority">
+              <option value="1">P1 · critical</option>
+              <option value="2">P2 · normal</option>
+              <option value="3">P3 · low</option>
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <label for="fKind">Kind</label><select id="fKind">
+            <option value="work">Work</option>
+            <option value="followup">Follow-up</option>
+            <option value="review">Review</option>
+            <option value="probe">Probe</option>
+          </select>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label for="fProject">Project / epic</label><input
+              id="fProject"
+              list="projectOptions"
+              placeholder="Web, API, Billing"
+            >
+          </div>
+          <div class="field">
+            <label for="fTag">Tag</label><input id="fTag" placeholder="Review">
+          </div>
+        </div>
+        <datalist id="projectOptions"></datalist>
+        <div class="field">
+          <label>Subtasks <span id="subCount"></span></label><div id="subtasks">
+          </div><input
+            id="newSubtask"
+            placeholder="Add a subtask and press Enter"
+          >
+        </div>
+        <div class="field">
+          <label for="fNotes">Notes</label><textarea
+            id="fNotes"
+            rows="7"
+            placeholder="Context, links, decisions, blockers…"
+          ></textarea>
+        </div>
+        <section class="field" aria-labelledby="linksTitle">
+          <label id="linksTitle">Jira &amp; merge requests</label>
+          <p class="hint">
+            Required links cover this outcome; references are for navigation.
+            Status is the last board observation. Save a new subtask before
+            linking it.
+          </p>
+          <div id="draftLinks"></div>
+          <label for="newLink">Jira key or full Jira/GitLab URL</label>
+          <input id="newLink" placeholder="PROJ-123 or https://gitlab.com/…">
+          <button class="btn" id="stageLink" type="button">
+            Add link to draft
+          </button>
+          <label for="fReconcileMode">Reconciliation</label>
+          <select id="fReconcileMode">
+            <option value="automatic">Automatic</option>
+            <option value="manual">Manual</option>
+          </select>
+          <p class="hint">
+            Manual excludes future automatic updates. Automatic completion is
+            not running yet.
+          </p>
+        </section>
+        <section class="field" aria-labelledby="workLogTitle">
+          <label id="workLogTitle">Work log</label>
+          <p class="hint">
+            Progress, decisions, blockers, and next steps. Notes remain
+            reference material.
+          </p>
+          <div class="row">
+            <select id="workLogKind" aria-label="Work log type">
+              <option value="progress">Progress</option>
+              <option value="decision">Decision</option>
+              <option value="blocker">Blocker</option>
+              <option value="blocker_resolved">Blocker resolved</option>
+              <option value="next_step">Next step</option>
+              <option value="review_delivered">Review delivered</option>
+            </select>
+            <button class="btn" id="addWorkLog" type="button">Add entry</button>
+          </div>
+          <textarea
+            id="workLogText"
+            rows="3"
+            placeholder="What changed, what was decided, what is blocked, or what happens next?"
+          ></textarea>
+          <div id="workLog" aria-live="polite"></div>
+        </section>
+        <div class="hint" id="metadata"></div>
+        <section aria-labelledby="historyTitle">
+          <h3 id="historyTitle">Task activity</h3>
+          <div id="taskActivity" aria-live="polite"></div>
+        </section>
+      </div>
+      <div class="drawer-foot">
+        <button class="btn primary" id="saveTask" type="button">
+          Save task
+        </button><span class="spacer"></span><button
+          class="btn danger"
+          id="deleteTask"
+          type="button"
+        >
+          Delete
+        </button>
+      </div>
+    </aside>
+
+    <script>
+      "use strict";
+      const LANES = [
+        {
+          key: "backlog",
+          name: "Backlog",
+          short: "Backlog",
+          color: "var(--backlog)",
+        },
+        {
+          key: "today",
+          name: "Today",
+          short: "Today",
+          color: "var(--today)",
+        },
+        {
+          key: "doing",
+          name: "In progress",
+          short: "Doing",
+          color: "var(--doing)",
+        },
+        {
+          key: "blocked",
+          name: "Blocked",
+          short: "Blocked",
+          color: "var(--blocked)",
+        },
+        {
+          key: "done",
+          name: "Done",
+          short: "Done",
+          color: "var(--done)",
+        },
+      ];
+      const LANE_KEYS = LANES.map((lane) => lane.key),
+        $ = (id) => document.getElementById(id);
+      const esc = (value) =>
+        String(value == null ? "" : value).replace(
+          /[&<>"']/g,
+          (char) => ({
+            "&": "&amp;",
+            "<": "&lt;",
+            ">": "&gt;",
+            '"': "&quot;",
+            "'": "&#39;",
+          }[char]),
+        );
+      const clone = (value) => JSON.parse(JSON.stringify(value));
+      const savedFocus = localStorage.getItem("board.focus");
+      let tasks = [],
+        view = localStorage.getItem("board.view") || "all",
+        focus = ["focus", "reviews", "everything"].includes(savedFocus)
+          ? savedFocus
+          : "focus",
+        hideDone = localStorage.getItem("board.hideDone") !== "0";
+      let openId = null,
+        draft = null,
+        isNew = false,
+        drag = null,
+        chimeOn = localStorage.getItem("board.chime") === "1",
+        chimeTimer = null;
+      const expanded = loadExpanded();
+      const writeQueues = new Map();
+      let pendingWrites = 0,
+        queuedSnapshot = null,
+        lastSnapshot = "";
+      const IDENTITY_ATTRIBUTES = [
+        "data-quick-sub",
+        "data-add-lane",
+        "data-add-project",
+        "data-sub-check",
+        "data-sub-select",
+        "data-sub-lane",
+        "data-parent-id",
+        "data-subtask-id",
+        "data-toggle",
+        "data-add-subtask",
+        "data-open",
+        "data-task-lane",
+        "data-rank",
+        "data-id",
+      ];
+
+      let drawerReturnFocus = null;
+      function updateCompletionNotice() {
+        if (!draft) return;
+        const count =
+          draft.subtasks.filter((sub) => sub.lane !== "done").length;
+        $("completionNotice").hidden = !count;
+        $("completionNotice").textContent = count + " unfinished step" +
+          (count === 1 ? "" : "s") +
+          ". Finish these steps before moving the task to Done. Subtasks keep their own lanes.";
+      }
+      function checkDraftConflict() {
+        if (!draft || isNew) return;
+        const latest = tasks.find((task) => task.id === openId);
+        const stale = !latest || latest.revision !== draft.revision;
+        $("editConflict").hidden = !stale;
+        $("saveTask").disabled = stale;
+        $("deleteTask").disabled = stale;
+        $("reloadTask").disabled = !latest;
+        $("conflictMessage").textContent = latest
+          ? "This task changed in another session. Your draft has not been overwritten."
+          : "This task was deleted in another session. Your draft is still available to copy.";
+      }
+      function identify(node) {
+        const attributes = IDENTITY_ATTRIBUTES.filter((name) =>
+          node.hasAttribute(name)
+        );
+        if (!attributes.length) return null;
+        const selector = node.tagName.toLowerCase() +
+          attributes.map((name) =>
+            `[${name}="${CSS.escape(node.getAttribute(name))}"]`
+          ).join("");
+        return {
+          selector,
+          index: [...$("workspace").querySelectorAll(selector)].indexOf(
+            node,
+          ),
+        };
+      }
+      function locate(identity) {
+        return identity &&
+          $("workspace").querySelectorAll(identity.selector)[
+            identity.index
+          ];
+      }
+      function captureWorkspaceState() {
+        const workspace = $("workspace"),
+          active = workspace.contains(document.activeElement)
+            ? document.activeElement
+            : null,
+          drafts = [
+            ...workspace.querySelectorAll(
+              "[data-quick-sub], [data-add-lane]",
+            ),
+          ].filter((input) => input.value).map((input) => [
+            identify(input),
+            input.value,
+          ]);
+        const focused = active && identify(active);
+        return {
+          drafts,
+          focused,
+          selection: active && typeof active.selectionStart === "number"
+            ? [active.selectionStart, active.selectionEnd]
+            : null,
+        };
+      }
+      function restoreWorkspaceState(state) {
+        state.drafts.forEach(([identity, value]) => {
+          const input = locate(identity);
+          if (input && !input.value) input.value = value;
+        });
+        const node = locate(state.focused);
+        if (!node) return;
+        node.focus({ preventScroll: true });
+        if (state.selection) node.setSelectionRange(...state.selection);
+      }
+      function applySnapshot(data) {
+        if (data === lastSnapshot) return;
+        lastSnapshot = data;
+        tasks = normalizeTasks(JSON.parse(data).tasks);
+        render();
+      }
+      function queueTaskWrite(taskId, write) {
+        pendingWrites++;
+        const previous = writeQueues.get(taskId) || Promise.resolve(),
+          run = previous.then(write, write);
+        writeQueues.set(taskId, run);
+        return run.finally(() => {
+          if (writeQueues.get(taskId) === run) {
+            writeQueues.delete(taskId);
+          }
+          pendingWrites--;
+          if (!pendingWrites && queuedSnapshot) {
+            const data = queuedSnapshot;
+            queuedSnapshot = null;
+            applySnapshot(data);
+          }
+        });
+      }
+      async function refreshTasks() {
+        const data = await api("/api/tasks");
+        tasks = normalizeTasks(data.tasks);
+        render();
+      }
+      async function loadActivity(target, id) {
+        const element = $(target);
+        if (target === "taskActivity" && !id) {
+          element.textContent =
+            "Activity will appear after this task is created.";
+          return;
+        }
+        element.textContent = "Loading activity…";
+        try {
+          const data = await api(
+            "/api/activity?limit=50" +
+              (id ? "&taskId=" + encodeURIComponent(id) : ""),
+          );
+          if (target === "taskActivity" && openId !== id) return;
+          element.innerHTML = data.activity.length
+            ? '<ol class="activity-list">' +
+              data.activity.map((event) =>
+                "<li><strong>" + esc(event.action) +
+                (id ? "" : " · " + esc(event.title)) +
+                "</strong><small>" +
+                esc(event.actor) + " · " +
+                esc(new Date(event.at).toLocaleString()) +
+                " · revision " + event.revision +
+                "</small><ul>" + event.changes.map((change) =>
+                  "<li>" + esc(change.field) + ": " +
+                  esc(change.before || "∅") + " → " +
+                  esc(change.after || "∅") + "</li>"
+                ).join("") + "</ul></li>"
+              ).join("") + '</ol><p class="hint">' + (data.more
+                ? "Showing the latest 50 retained changes."
+                : "No earlier retained activity. History starts with this upgrade.") +
+              "</p>"
+            : '<p class="hint">No recorded activity yet. Changes before this upgrade are not available.</p>';
+        } catch (error) {
+          if (target !== "taskActivity" || openId === id) {
+            element.textContent = "Could not load activity: " +
+              error.message;
+          }
+        }
+      }
+      async function loadWorkLog(id) {
+        const element = $("workLog");
+        if (!id) {
+          element.innerHTML =
+            '<p class="hint">Save the task before adding work-log entries.</p>';
+          return;
+        }
+        element.textContent = "Loading work log…";
+        try {
+          const data = await api(
+            "/api/tasks/" + encodeURIComponent(id) +
+              "/history?limit=100",
+          );
+          if (openId !== id) return;
+          const entries = data.records.filter((record) =>
+            record.workLog
+          );
+          element.innerHTML = entries.length
+            ? '<ol class="activity-list">' + entries.map((record) => {
+              const entry = record.workLog;
+              return "<li><strong>" +
+                esc(entry.kind.replaceAll("_", " ")) +
+                "</strong><small>" +
+                esc(entry.actor) + " · occurred " +
+                esc(new Date(entry.occurredAt).toLocaleString()) +
+                (entry.origin !== "direct"
+                  ? " · " + esc(entry.origin)
+                  : "") +
+                "</small><div>" +
+                esc(entry.text) + "</div>" +
+                (entry.needsReview
+                  ? "<small>Needs review</small>"
+                  : "") +
+                "</li>";
+            }).join("") + "</ol>"
+            : '<p class="hint">No work-log entries yet.</p>';
+        } catch (error) {
+          if (openId === id) {
+            element.textContent = "Could not load work log: " +
+              error.message;
+          }
+        }
+      }
+      $("fLane").addEventListener("change", updateCompletionNotice);
+      $("reloadTask").addEventListener("click", async () => {
+        if (
+          !confirm(
+            "Load the latest task? This replaces your unsaved draft.",
+          )
+        ) return;
+        try {
+          await refreshTasks();
+          if (tasks.some((task) => task.id === openId)) {
+            openDrawer(openId);
+          }
+        } catch (error) {
+          say(error.message, true);
+        }
+      });
+      $("activityButton").addEventListener("click", () => {
+        $("activityDialog").showModal();
+        loadActivity("boardActivity");
+      });
+      $("closeActivity").addEventListener(
+        "click",
+        () => $("activityDialog").close(),
+      );
+      let reportKind = "standup";
+      const chicagoDate = (date) =>
+        new Intl.DateTimeFormat("en-CA", {
+          timeZone: "America/Chicago",
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        }).format(date);
+      function openReport(kind) {
+        reportKind = kind;
+        const now = new Date();
+        const weekday = now.getDay();
+        const start = new Date(now);
+        if (kind === "standup") {
+          start.setDate(
+            now.getDate() - (weekday === 1 ? 3 : weekday === 0 ? 2 : 1),
+          );
+        } else start.setDate(now.getDate() - ((weekday + 6) % 7 + 7));
+        const end = kind === "standup" ? now : new Date(
+          start.getFullYear(),
+          start.getMonth(),
+          start.getDate() + 6,
+        );
+        $("reportTitle").textContent = kind === "standup"
+          ? "Generate standup"
+          : "Generate weekly report";
+        $("reportStart").value = chicagoDate(start);
+        $("reportEnd").value = chicagoDate(end);
+        $("reportOutput").value = "";
+        $("reportMessage").textContent =
+          "Reports use recorded work evidence only; edit the Markdown before sharing.";
+        $("reportDialog").showModal();
+      }
+      $("standupButton").addEventListener(
+        "click",
+        () => openReport("standup"),
+      );
+      $("weeklyButton").addEventListener(
+        "click",
+        () => openReport("weekly"),
+      );
+      $("closeReport").addEventListener(
+        "click",
+        () => $("reportDialog").close(),
+      );
+      $("runReport").addEventListener("click", async () => {
+        try {
+          $("reportMessage").textContent =
+            "Generating from recorded evidence…";
+          const projects = $("reportProjects").value.split(",").map((
+            value,
+          ) => value.trim()).filter(Boolean);
+          const report = await api("/api/reports/preview", {
+            method: "POST",
+            body: JSON.stringify({
+              kind: reportKind,
+              start: $("reportStart").value,
+              end: $("reportEnd").value,
+              projects,
+            }),
+          });
+          $("reportOutput").value = report.markdown;
+          $("reportMessage").textContent = (report.partialLegacyHistory
+            ? "Earlier pre-upgrade history is incomplete. "
+            : "") +
+            report.sourceRecordIds.length + " source record(s) used.";
+        } catch (error) {
+          $("reportMessage").textContent =
+            "Could not generate report: " + error.message;
+        }
+      });
+      $("copyReport").addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText($("reportOutput").value);
+          $("reportMessage").textContent = "Copied Markdown.";
+        } catch {
+          $("reportMessage").textContent =
+            "Copy failed; select the editable text and copy it manually.";
+        }
+      });
+
+      function loadExpanded() {
+        try {
+          const value = JSON.parse(
+            localStorage.getItem("board.expanded") || "[]",
+          );
+          return new Set(Array.isArray(value) ? value : []);
+        } catch {
+          return new Set();
+        }
+      }
+      function normalizeTasks(list) {
+        return (Array.isArray(list) ? list : []).map((task) => ({
+          ...task,
+          subtasks: (Array.isArray(task.subtasks) ? task.subtasks : [])
+            .map((subtask) => {
+              const lane = subtask.lane ||
+                (subtask.done ? "done" : task.lane);
+              return { ...subtask, lane, done: lane === "done" };
+            }),
+        }));
+      }
+      function status(text, state = "") {
+        $("statusText").textContent = text;
+        $("dot").className = "dot " + state;
+      }
+      function say(message, sticky = false) {
+        if (draft) {
+          $("drawerMessage").textContent = message;
+          $("drawerMessage").hidden = !message;
+        }
+        const banner = $("banner");
+        banner.textContent = message;
+        banner.classList.toggle("show", !!message);
+        if (message && !sticky) {
+          setTimeout(() => {
+            if (banner.textContent === message) {
+              banner.classList.remove("show");
+            }
+          }, 5000);
+        }
+      }
+      function saveExpanded() {
+        localStorage.setItem(
+          "board.expanded",
+          JSON.stringify([...expanded]),
+        );
+      }
+      function sorted(list) {
+        return list.slice().sort((a, b) =>
+          a.order - b.order || a.priority - b.priority ||
+          a.id.localeCompare(b.id)
+        );
+      }
+      function projectsFromTasks() {
+        return [
+          ...new Set(tasks.map((task) => task.project).filter(Boolean)),
+        ].sort((a, b) =>
+          a.localeCompare(b, undefined, { sensitivity: "base" })
+        );
+      }
+      function hasOpenSteps(task) {
+        return task.subtasks.some((subtask) => subtask.lane !== "done");
+      }
+      function isOpenWork(task) {
+        return task.lane !== "done" || hasOpenSteps(task);
+      }
+      function visibleTasks() {
+        const query = $("search").value.trim().toLowerCase(),
+          project = $("projectFilter").value;
+        return tasks.filter((task) => {
+          const kind = task.kind || "work",
+            matchesFocus = focus === "everything" ||
+              (focus === "reviews" && kind === "review") ||
+              (focus === "focus" &&
+                (task.lane === "blocked" ||
+                  (["work", "followup"].includes(kind) &&
+                    ["today", "doing", "blocked"].includes(
+                      task.lane,
+                    ))));
+          return matchesFocus &&
+            (!hideDone || isOpenWork(task)) &&
+            (!project ||
+              (project === "__unassigned__"
+                ? !task.project
+                : task.project === project)) &&
+            (!query ||
+              [
+                task.title,
+                task.notes,
+                task.project,
+                task.tag,
+                ...task.subtasks.map((subtask) => subtask.title),
+              ].some((value) =>
+                String(value || "").toLowerCase().includes(query)
+              ));
+        });
+      }
+      function refreshProjectControls() {
+        const projects = projectsFromTasks(),
+          current = $("projectFilter").value;
+        $("projectFilter").innerHTML =
+          '<option value="">All projects</option>' +
+          projects.map((project) =>
+            `<option value="${esc(project)}">${esc(project)}</option>`
+          ).join("") +
+          '<option value="__unassigned__">Unassigned</option>';
+        if (
+          [...$("projectFilter").options].some((option) =>
+            option.value === current
+          )
+        ) $("projectFilter").value = current;
+        $("projectOptions").innerHTML = projects.map((project) =>
+          `<option value="${esc(project)}"></option>`
+        ).join("");
+      }
+      function render() {
+        const workspaceState = captureWorkspaceState();
+        const scrollPositions = new Map(
+          [...$("workspace").querySelectorAll("[data-scroll-key]")].map(
+            (
+              node,
+            ) => [node.dataset.scrollKey, [
+              node.scrollLeft,
+              node.scrollTop,
+            ]],
+          ),
+        );
+        refreshProjectControls();
+        checkDraftConflict();
+        $("allView").classList.toggle("active", view === "all");
+        $("projectView").classList.toggle("active", view === "project");
+        ["focus", "reviews", "everything"].forEach((mode) => {
+          const control = $(`${mode}View`), active = focus === mode;
+          control.classList.toggle("active", active);
+          control.setAttribute("aria-pressed", String(active));
+        });
+        $("doneToggle").textContent = hideDone
+          ? "Show done"
+          : "Hide done";
+        const filtered = visibleTasks(),
+          active = filtered.filter(isOpenWork).length,
+          doing =
+            filtered.filter((task) => task.lane === "doing").length,
+          openSteps = filtered.flatMap((task) => task.subtasks).filter((
+            subtask,
+          ) => subtask.lane !== "done").length;
+        $("summary").innerHTML =
+          `<strong>${active} open</strong><span>${doing} in progress</span><span>${openSteps} open steps</span><span>${filtered.length} shown</span><span class="legend">Drag to move · ↑↓ to rank</span>`;
+        if (view === "project") renderProjects(filtered);
+        else {$("workspace").innerHTML =
+            `<div class="board-scroll" data-scroll-key="all-horizontal"><div class="board">${
+              lanesHTML(filtered, "")
+            }</div></div>`;}
+        $("workspace").querySelectorAll("[data-scroll-key]").forEach(
+          (node) => {
+            const position = scrollPositions.get(
+              node.dataset.scrollKey,
+            );
+            if (position) {
+              node.scrollLeft = position[0];
+              node.scrollTop = position[1];
+            }
+          },
+        );
+        restoreWorkspaceState(workspaceState);
+      }
+      function renderProjects(filtered) {
+        const names = [
+          ...new Set(filtered.map((task) => task.project || "")),
+        ].sort((a, b) =>
+          (a || "Unassigned").localeCompare(
+            b || "Unassigned",
+            undefined,
+            { sensitivity: "base" },
+          )
+        );
+        if (!names.length) {
+          $("workspace").innerHTML =
+            '<div class="empty">No work matches these filters.</div>';
+          return;
+        }
+        $("workspace").innerHTML = '<div class="grouped">' +
+          names.map((name) => {
+            const group = filtered.filter((task) =>
+              (task.project || "") === name
+            );
+            return `<section class="project-section"><div class="project-head"><h2>${
+              esc(name || "Unassigned")
+            }</h2><span>${group.length} task${
+              group.length === 1 ? "" : "s"
+            }</span></div><div class="board-scroll" data-scroll-key="${
+              esc(JSON.stringify(["project-horizontal", name]))
+            }"><div class="board">${
+              lanesHTML(group, name)
+            }</div></div></section>`;
+          }).join("") + "</div>";
+      }
+      function lanesHTML(list, project) {
+        return LANES.map((lane) => {
+          const laneTasks = sorted(
+            list.filter((task) => task.lane === lane.key),
+          );
+          return `<section class="lane" data-lane="${lane.key}" data-project="${
+            esc(project)
+          }"><div class="lane-head"><span class="swatch" style="background:${lane.color}"></span><span class="lane-name">${lane.name}</span><span class="count">${laneTasks.length}</span></div><div class="lane-body" tabindex="0" role="region" aria-label="${
+            esc(project ? project + ": " : "")
+          }${lane.name} tasks" data-scroll-key="${
+            esc(JSON.stringify([view, project, lane.key]))
+          }">${
+            laneTasks.length
+              ? laneTasks.map((task, index) =>
+                cardHTML(task, laneTasks, index)
+              ).join("")
+              : '<div class="empty">Clear</div>'
+          }</div><div class="lane-add"><input data-add-lane="${lane.key}" data-add-project="${
+            esc(project)
+          }" placeholder="+ add to ${lane.name.toLowerCase()}"></div></section>`;
+        }).join("");
+      }
+      function linkChips(task, subtaskId = "") {
+        return (task.links || []).filter((link) =>
+          (link.subtaskId || "") === subtaskId
+        ).map((link) => {
+          const label = link.kind === "mr"
+            ? link.ref.split("/").pop()
+            : link.ref;
+          return `<a class="chip external-link" draggable="false" href="${
+            esc(link.url)
+          }" target="_blank" rel="noopener noreferrer" aria-label="Open ${
+            esc(link.ref)
+          } (${esc(link.role)})" title="${esc(link.ref)}${
+            link.state ? ` · Last observed: ${esc(link.state)}` : ""
+          }">${esc(label)}${
+            link.role === "reference" ? " · reference" : ""
+          }${link.state ? ` · ${esc(link.state)}` : ""}</a>`;
+        }).join("");
+      }
+      function cardHTML(task, laneTasks, index) {
+        const total = task.subtasks.length,
+          done =
+            task.subtasks.filter((subtask) => subtask.lane === "done")
+              .length,
+          laneIndex = LANE_KEYS.indexOf(task.lane),
+          isExpanded = expanded.has(task.id);
+        return `<article class="card p${task.priority} ${
+          task.lane === "done" ? "done" : ""
+        } ${total ? "has-subtasks" : ""} ${
+          isExpanded ? "expanded" : ""
+        }" draggable="true" data-task-id="${task.id}"><div class="card-head"><button class="disclosure" type="button" data-toggle="${task.id}" aria-expanded="${isExpanded}" aria-controls="details-${task.id}" aria-label="${
+          isExpanded ? "Collapse" : "Expand"
+        } ${
+          esc(task.title)
+        }"><span>›</span></button><div class="card-copy"><button class="card-title" type="button" data-toggle="${task.id}" aria-expanded="${isExpanded}" aria-controls="details-${task.id}">${
+          esc(task.title)
+        }</button><div class="meta"><span class="chip">P${task.priority}</span>${
+          task.kind && task.kind !== "work"
+            ? `<span class="chip kind">${esc(task.kind)}</span>`
+            : ""
+        }${
+          view === "all" && task.project
+            ? `<span class="chip project">${esc(task.project)}</span>`
+            : ""
+        }${
+          task.tag ? `<span class="chip">${esc(task.tag)}</span>` : ""
+        }${
+          total
+            ? `<span class="chip">${done}/${total} done</span>${
+              task.lane === "done" && done < total
+                ? '<span class="chip incomplete">Open steps · reopen parent</span>'
+                : ""
+            }`
+            : ""
+        }${
+          task.source !== "web"
+            ? `<span class="chip source">${esc(task.source)}</span>`
+            : ""
+        }${
+          task.reconcileMode === "manual"
+            ? '<span class="chip">Manual</span>'
+            : ""
+        }${linkChips(task)}</div></div></div>${
+          total
+            ? `<div class="progress"><i style="width:${
+              Math.round(done / total * 100)
+            }%"></i></div>`
+            : ""
+        }<div class="card-tools"><button class="mini" type="button" data-task-lane="-1" data-id="${task.id}" ${
+          laneIndex === 0 ? "disabled" : ""
+        } aria-label="Move task left">←</button><button class="mini" type="button" data-task-lane="1" data-id="${task.id}" ${
+          laneIndex === LANE_KEYS.length - 1 ? "disabled" : ""
+        } aria-label="Move task right">→</button><span class="tool-divider"></span><button class="mini" type="button" data-rank="-1" data-id="${task.id}" ${
+          index === 0 ? "disabled" : ""
+        } aria-label="Rank task higher">↑</button><button class="mini" type="button" data-rank="1" data-id="${task.id}" ${
+          index === laneTasks.length - 1 ? "disabled" : ""
+        } aria-label="Rank task lower">↓</button><button class="mini add-subtask" type="button" data-add-subtask="${task.id}" aria-label="Add subtask to ${
+          esc(task.title)
+        }" title="Add subtask">+</button><button class="mini label" type="button" data-open="${task.id}">Edit</button></div>${
+          subtaskPanelHTML(task, isExpanded)
+        }</article>`;
+      }
+      function subtaskPanelHTML(task, isExpanded) {
+        const done =
+          task.subtasks.filter((subtask) => subtask.lane === "done")
+            .length;
+        return `<div class="subtask-panel" id="details-${task.id}" ${
+          isExpanded ? "" : "hidden"
+        }>${
+          task.notes
+            ? `<section class="card-notes"><h3>Notes</h3><p>${
+              esc(task.notes)
+            }</p></section>`
+            : ""
+        }<div class="subtask-head"><span>Subtasks</span><span>${done}/${task.subtasks.length} complete</span></div><div class="subtask-list">${
+          task.subtasks.length
+            ? task.subtasks.map((subtask) =>
+              subtaskRowHTML(task, subtask)
+            ).join("")
+            : '<div class="empty">No subtasks yet</div>'
+        }</div><div class="quick-sub"><input data-quick-sub="${task.id}" placeholder="Add a step and press Enter"></div></div>`;
+      }
+      function subtaskRowHTML(task, subtask) {
+        const index = LANE_KEYS.indexOf(subtask.lane);
+        return `<div class="subtask-row ${
+          subtask.lane === "done" ? "done" : ""
+        }" draggable="true" data-parent-id="${task.id}" data-subtask-id="${subtask.id}"><span class="grip" aria-hidden="true">⠿</span><input class="subcheck" type="checkbox" data-sub-check="${subtask.id}" data-parent-id="${task.id}" ${
+          subtask.lane === "done" ? "checked" : ""
+        } aria-label="Mark ${
+          esc(subtask.title)
+        } complete"><span class="subtask-title">${
+          esc(subtask.title)
+        }<span class="meta">${
+          linkChips(task, subtask.id)
+        }</span></span><span class="sub-controls"><button class="mini sub-move" type="button" data-sub-lane="-1" data-parent-id="${task.id}" data-subtask-id="${subtask.id}" ${
+          index === 0 ? "disabled" : ""
+        } aria-label="Move subtask left">←</button><select class="sub-lane" data-sub-select="${subtask.id}" data-parent-id="${task.id}" data-lane="${subtask.lane}" aria-label="Lane for ${
+          esc(subtask.title)
+        }">${
+          LANES.map((lane) =>
+            `<option value="${lane.key}" ${
+              lane.key === subtask.lane ? "selected" : ""
+            }>${lane.short}</option>`
+          ).join("")
+        }</select><button class="mini sub-move" type="button" data-sub-lane="1" data-parent-id="${task.id}" data-subtask-id="${subtask.id}" ${
+          index === LANE_KEYS.length - 1 ? "disabled" : ""
+        } aria-label="Move subtask right">→</button></span></div>`;
+      }
+
+      async function api(
+        path,
+        { adoptRevision = false, ...options } = {},
+      ) {
+        const match = path.match(/^\/api\/tasks\/([^/]+)/);
+        const current = match &&
+          tasks.find((task) =>
+            task.id === decodeURIComponent(match[1])
+          );
+        const response = await fetch(path, {
+          ...options,
+          headers: {
+            ...(options.body
+              ? { "Content-Type": "application/json" }
+              : {}),
+            "X-Actor": "web",
+            ...(options.method && current
+              ? { "If-Match": String(current.revision) }
+              : {}),
+            ...(options.headers || {}),
+          },
+        });
+        if (!response.ok) {
+          let message = `Request failed (${response.status})`;
+          try {
+            message = (await response.json()).error || message;
+          } catch {
+            /* Keep the HTTP status message if the error body is not JSON. */
+          }
+          const error = new Error(message);
+          error.status = response.status;
+          throw error;
+        }
+        if (adoptRevision && match) {
+          const revision = Number(
+              response.headers.get("ETag")?.replaceAll('"', ""),
+            ),
+            latest = tasks.find((task) =>
+              task.id === decodeURIComponent(match[1])
+            );
+          if (latest && revision > latest.revision) {
+            latest.revision = revision;
+          }
+        }
+        return response.status === 204 ? null : response.json();
+      }
+      async function patchSubtask(taskId, subtaskId, patch) {
+        const previous = clone(tasks),
+          task = tasks.find((item) => item.id === taskId),
+          subtask = task?.subtasks.find((item) =>
+            item.id === subtaskId
+          );
+        if (!subtask) return;
+        Object.assign(subtask, patch);
+        if (patch.lane !== undefined) {
+          subtask.done = patch.lane === "done";
+        } else if (patch.done !== undefined) {
+          if (patch.done) subtask.lane = "done";
+          else if (subtask.lane === "done") {
+            subtask.lane = task.lane === "done" ? "today" : task.lane;
+          }
+          subtask.done = patch.done;
+        }
+        render();
+        try {
+          await queueTaskWrite(taskId, () =>
+            api(
+              `/api/tasks/${encodeURIComponent(taskId)}/subtasks/${
+                encodeURIComponent(subtaskId)
+              }`,
+              {
+                method: "PATCH",
+                body: JSON.stringify(patch),
+                adoptRevision: true,
+              },
+            ));
+        } catch (error) {
+          tasks = previous;
+          render();
+          say(error.message, true);
+          try {
+            await refreshTasks();
+          } catch (refreshError) {
+            say(error.message + " · " + refreshError.message, true);
+          }
+        }
+      }
+      async function createTask(input) {
+        try {
+          const data = await api("/api/tasks", {
+            method: "POST",
+            body: JSON.stringify({ ...input, source: "web" }),
+          });
+          return data.tasks[0];
+        } catch (error) {
+          say(error.message, true);
+          throw error;
+        }
+      }
+      async function createSubtask(taskId, title, lane = "") {
+        try {
+          return await queueTaskWrite(taskId, () =>
+            api(
+              `/api/tasks/${encodeURIComponent(taskId)}/subtasks`,
+              {
+                method: "POST",
+                body: JSON.stringify({
+                  title,
+                  ...(lane ? { lane } : {}),
+                }),
+                adoptRevision: true,
+              },
+            ));
+        } catch (error) {
+          say(error.message, true);
+          throw error;
+        }
+      }
+      function rankScope(task, lane, project) {
+        return sorted(
+          tasks.filter((item) =>
+            item.id !== task.id && item.lane === lane &&
+            (view !== "project" ||
+              (item.project || "") === (project || ""))
+          ),
+        );
+      }
+      async function persistTaskOrder(
+        task,
+        lane,
+        ordered,
+        destinationProject,
+        moveProject,
+      ) {
+        const previous = clone(tasks), ops = [];
+        ordered.forEach((item, position) => {
+          const order = (position + 1) * 1000,
+            patch = {
+              op: "patch",
+              id: item.id,
+              order,
+              expectedRevision: item.revision,
+            },
+            local = tasks.find((candidate) => candidate.id === item.id);
+          if (item.id === task.id) {
+            patch.lane = lane;
+            if (moveProject) patch.project = destinationProject;
+          }
+          ops.push(patch);
+          local.order = order;
+          if (item.id === task.id) {
+            local.lane = lane;
+            if (moveProject) local.project = destinationProject;
+          }
+        });
+        render();
+        try {
+          await api("/api/ops", {
+            method: "POST",
+            body: JSON.stringify({ source: "web", ops }),
+          });
+        } catch (error) {
+          tasks = previous;
+          render();
+          say(error.message, true);
+          try {
+            await refreshTasks();
+          } catch (refreshError) {
+            say(error.message + " · " + refreshError.message, true);
+          }
+        }
+      }
+      function placeTask(
+        taskId,
+        lane,
+        targetId = null,
+        after = true,
+        project = null,
+      ) {
+        const task = tasks.find((item) => item.id === taskId);
+        if (!task || targetId === taskId) return;
+        const moveProject = view === "project",
+          destinationProject = moveProject
+            ? (project === null ? (task.project || "") : project)
+            : (task.project || ""),
+          ordered = rankScope(task, lane, destinationProject);
+        let index = ordered.length;
+        if (targetId) {
+          const targetIndex = ordered.findIndex((item) =>
+            item.id === targetId
+          );
+          if (targetIndex >= 0) index = targetIndex + (after ? 1 : 0);
+        }
+        ordered.splice(index, 0, task);
+        return persistTaskOrder(
+          task,
+          lane,
+          ordered,
+          destinationProject,
+          moveProject,
+        );
+      }
+      function rankTask(taskId, direction) {
+        const task = tasks.find((item) => item.id === taskId);
+        if (!task) return;
+        const project = view === "project"
+            ? (task.project || "")
+            : null,
+          list = sorted(
+            visibleTasks().filter((item) =>
+              item.lane === task.lane &&
+              (project === null || (item.project || "") === project)
+            ),
+          ),
+          index = list.findIndex((item) => item.id === taskId),
+          target = list[index + direction];
+        if (!target) return;
+        return placeTask(
+          taskId,
+          task.lane,
+          target.id,
+          direction > 0,
+          project,
+        );
+      }
+      function clearDropClasses() {
+        document.querySelectorAll(".dragover,.drop-before,.drop-after")
+          .forEach((node) =>
+            node.classList.remove(
+              "dragover",
+              "drop-before",
+              "drop-after",
+            )
+          );
+      }
+      function clearDragClasses() {
+        document.querySelectorAll(".dragging").forEach((node) =>
+          node.classList.remove("dragging")
+        );
+        clearDropClasses();
+      }
+
+      function setCardExpanded(
+        id,
+        shouldExpand,
+        focusComposer = false,
+      ) {
+        const task = tasks.find((item) => item.id === id);
+        if (!task) return;
+        if (shouldExpand) expanded.add(id);
+        else expanded.delete(id);
+        saveExpanded();
+
+        const card = document.querySelector(
+          `.card[data-task-id="${id}"]`,
+        );
+        if (!card) return;
+        card.classList.toggle("expanded", shouldExpand);
+        const panel = card.querySelector(".subtask-panel");
+        if (panel) {
+          if (shouldExpand && panel.hidden) {
+            panel.classList.add("revealing");
+          }
+          panel.hidden = !shouldExpand;
+        }
+        card.querySelectorAll("[data-toggle]").forEach((button) =>
+          button.setAttribute("aria-expanded", String(shouldExpand))
+        );
+        const disclosure = card.querySelector(".disclosure");
+        if (disclosure) {
+          disclosure.setAttribute(
+            "aria-expanded",
+            String(shouldExpand),
+          );
+          disclosure.setAttribute(
+            "aria-label",
+            `${shouldExpand ? "Collapse" : "Expand"} ${task.title}`,
+          );
+        }
+        if (focusComposer) {
+          card.querySelector("[data-quick-sub]")?.focus();
+        }
+      }
+
+      $("workspace").addEventListener("click", (event) => {
+        if (event.target.closest(".external-link")) {
+          event.stopPropagation();
+          return;
+        }
+        const toggle = event.target.closest("[data-toggle]");
+        if (toggle) {
+          const id = toggle.dataset.toggle;
+          setCardExpanded(id, !expanded.has(id));
+          return;
+        }
+        const addSubtask = event.target.closest("[data-add-subtask]");
+        if (addSubtask) {
+          setCardExpanded(addSubtask.dataset.addSubtask, true, true);
+          return;
+        }
+        const opener = event.target.closest("[data-open]");
+        if (opener) {
+          openDrawer(opener.dataset.open);
+          return;
+        }
+        const laneMover = event.target.closest("[data-task-lane]");
+        if (laneMover && !laneMover.disabled) {
+          const task = tasks.find((item) =>
+              item.id === laneMover.dataset.id
+            ),
+            index = LANE_KEYS.indexOf(task.lane) +
+              Number(laneMover.dataset.taskLane);
+          if (index >= 0 && index < LANE_KEYS.length) {
+            placeTask(task.id, LANE_KEYS[index]);
+          }
+          return;
+        }
+        const ranker = event.target.closest("[data-rank]");
+        if (ranker && !ranker.disabled) {
+          rankTask(ranker.dataset.id, Number(ranker.dataset.rank));
+          return;
+        }
+        const subMover = event.target.closest("[data-sub-lane]");
+        if (subMover && !subMover.disabled) {
+          const task = tasks.find((item) =>
+              item.id === subMover.dataset.parentId
+            ),
+            subtask = task?.subtasks.find((item) =>
+              item.id === subMover.dataset.subtaskId
+            ),
+            index = LANE_KEYS.indexOf(subtask?.lane) +
+              Number(subMover.dataset.subLane);
+          if (subtask && index >= 0 && index < LANE_KEYS.length) {
+            patchSubtask(task.id, subtask.id, {
+              lane: LANE_KEYS[index],
+            });
+          }
+        }
+      });
+      $("workspace").addEventListener("change", (event) => {
+        if (event.target.matches("[data-sub-select]")) {
+          patchSubtask(
+            event.target.dataset.parentId,
+            event.target.dataset.subSelect,
+            { lane: event.target.value },
+          );
+          return;
+        }
+        if (event.target.matches("[data-sub-check]")) {
+          patchSubtask(
+            event.target.dataset.parentId,
+            event.target.dataset.subCheck,
+            { done: event.target.checked },
+          );
+        }
+      });
+      $("workspace").addEventListener("keydown", async (event) => {
+        if (event.key !== "Enter") return;
+        const taskInput = event.target.closest("[data-add-lane]");
+        if (taskInput) {
+          const title = taskInput.value.trim();
+          if (!title) return;
+          const identity = identify(taskInput);
+          taskInput.value = "";
+          try {
+            await createTask({
+              title,
+              lane: taskInput.dataset.addLane,
+              kind: "work",
+              project: taskInput.dataset.addProject ||
+                $("projectFilter").value.replace("__unassigned__", ""),
+            });
+          } catch {
+            const current = locate(identity);
+            if (current && !current.value) current.value = title;
+          }
+          return;
+        }
+        const subInput = event.target.closest("[data-quick-sub]");
+        if (subInput) {
+          event.preventDefault();
+          const title = subInput.value.trim();
+          if (!title) return;
+          const identity = identify(subInput);
+          subInput.value = "";
+          try {
+            await createSubtask(subInput.dataset.quickSub, title);
+          } catch {
+            const current = locate(identity);
+            if (current && !current.value) current.value = title;
+          }
+        }
+      });
+      $("workspace").addEventListener("dragstart", (event) => {
+        if (event.target.closest(".external-link")) {
+          event.preventDefault();
+          return;
+        }
+        const subtask = event.target.closest(".subtask-row");
+        if (subtask) {
+          if (event.target.closest("input,select,button")) {
+            event.preventDefault();
+            return;
+          }
+          drag = {
+            kind: "subtask",
+            taskId: subtask.dataset.parentId,
+            subtaskId: subtask.dataset.subtaskId,
+          };
+          subtask.classList.add("dragging");
+          event.dataTransfer.setData(
+            "text/plain",
+            JSON.stringify(drag),
+          );
+          event.dataTransfer.effectAllowed = "move";
+          return;
+        }
+        const card = event.target.closest(".card");
+        if (
+          !card || event.target.closest("button,input,select,textarea")
+        ) {
+          event.preventDefault();
+          return;
+        }
+        drag = { kind: "task", taskId: card.dataset.taskId };
+        card.classList.add("dragging");
+        event.dataTransfer.setData("text/plain", JSON.stringify(drag));
+        event.dataTransfer.effectAllowed = "move";
+      });
+      $("workspace").addEventListener("dragend", () => {
+        drag = null;
+        clearDragClasses();
+      });
+      $("workspace").addEventListener("dragover", (event) => {
+        const lane = event.target.closest(".lane");
+        if (!lane || !drag) return;
+        event.preventDefault();
+        clearDropClasses();
+        lane.classList.add("dragover");
+        if (drag.kind === "task") {
+          const card = event.target.closest(".card");
+          if (card && card.dataset.taskId !== drag.taskId) {
+            const after = event.clientY >
+              card.getBoundingClientRect().top +
+                card.getBoundingClientRect().height / 2;
+            card.classList.add(after ? "drop-after" : "drop-before");
+          }
+        }
+      });
+      $("workspace").addEventListener("drop", (event) => {
+        const lane = event.target.closest(".lane");
+        if (!lane || !drag) return;
+        event.preventDefault();
+        const dropped = drag;
+        drag = null;
+        if (dropped.kind === "subtask") {
+          patchSubtask(dropped.taskId, dropped.subtaskId, {
+            lane: lane.dataset.lane,
+          });
+        } else {
+          const target = event.target.closest(".card"),
+            after = target
+              ? event.clientY >
+                target.getBoundingClientRect().top +
+                  target.getBoundingClientRect().height / 2
+              : true;
+          placeTask(
+            dropped.taskId,
+            lane.dataset.lane,
+            target?.dataset.taskId || null,
+            after,
+            lane.dataset.project || "",
+          );
+        }
+        clearDragClasses();
+      });
+
+      function renderDraftLinks() {
+        $("draftLinks").innerHTML = (draft.links || []).map((
+          link,
+          index,
+        ) =>
+          `<div class="field"><span>${
+            esc(link.ref || link.url)
+          }</span><select data-link-scope="${index}" aria-label="Scope for ${
+            esc(link.ref || link.url)
+          }"><option value="">Whole card</option>${
+            draft.subtasks.filter((sub) => sub.id).map((sub) =>
+              `<option value="${esc(sub.id)}" ${
+                link.subtaskId === sub.id ? "selected" : ""
+              }>${esc(sub.title)}</option>`
+            ).join("")
+          }</select><select data-link-role="${index}" aria-label="Role for ${
+            esc(link.ref || link.url)
+          }"><option value="required">Required</option><option value="reference" ${
+            link.role === "reference" ? "selected" : ""
+          }>Reference</option></select><button class="btn" type="button" data-remove-link="${index}">Remove link</button></div>`
+        ).join("");
+      }
+      $("stageLink").addEventListener("click", () => {
+        const ref = $("newLink").value.trim();
+        if (!ref) {
+          say("Enter a Jira key or link first.", true);
+          return;
+        }
+        if (draft.links.length >= 30) {
+          say("A card can have at most 30 links.", true);
+          return;
+        }
+        draft.links.push({ ref, role: "required" });
+        $("newLink").value = "";
+        renderDraftLinks();
+      });
+      $("draftLinks").addEventListener("click", (event) => {
+        const button = event.target.closest("[data-remove-link]");
+        if (button) {
+          draft.links.splice(Number(button.dataset.removeLink), 1);
+          renderDraftLinks();
+        }
+      });
+      $("draftLinks").addEventListener("change", (event) => {
+        if (event.target.matches("[data-link-role]")) {
+          draft.links[Number(event.target.dataset.linkRole)].role =
+            event.target.value;
+        }
+        if (event.target.matches("[data-link-scope]")) {
+          draft.links[Number(event.target.dataset.linkScope)]
+            .subtaskId = event.target.value;
+        }
+      });
+      function openDrawer(id = null, defaults = {}) {
+        if (!draft) drawerReturnFocus = document.activeElement;
+        isNew = !id;
+        openId = id;
+        draft = id ? clone(tasks.find((task) => task.id === id)) : {
+          title: "",
+          lane: defaults.lane || "today",
+          priority: 2,
+          kind: "work",
+          project: defaults.project || "",
+          tag: "",
+          notes: "",
+          source: "web",
+          subtasks: [],
+          links: [],
+          reconcileMode: "automatic",
+        };
+        if (!draft) return;
+        $("editConflict").hidden = true;
+        $("drawerMessage").hidden = true;
+        $("completionNotice").hidden = true;
+        $("saveTask").disabled = false;
+        $("deleteTask").disabled = false;
+        $("drawerLabel").textContent = isNew
+          ? "New task"
+          : "Task details";
+        $("fTitle").value = draft.title;
+        $("fPriority").value = String(draft.priority);
+        $("fKind").value = draft.kind || "work";
+        $("fProject").value = draft.project || "";
+        $("fTag").value = draft.tag || "";
+        $("fNotes").value = draft.notes || "";
+        draft.links ||= [];
+        $("fReconcileMode").value = draft.reconcileMode || "automatic";
+        $("newLink").value = "";
+        renderDraftLinks();
+        $("fLane").innerHTML = LANES.map((lane) =>
+          `<option value="${lane.key}" ${
+            lane.key === draft.lane ? "selected" : ""
+          }>${lane.name}</option>`
+        ).join("");
+        $("metadata").textContent = isNew
+          ? "Created when saved."
+          : `Created ${
+            new Date(draft.createdAt).toLocaleString()
+          } · ${draft.source}`;
+        $("deleteTask").style.display = isNew ? "none" : "block";
+        $("addWorkLog").disabled = isNew;
+        $("workLogText").value = "";
+        renderDrawerSubtasks();
+        loadActivity("taskActivity", id);
+        loadWorkLog(id);
+        $("workspace").inert = true;
+        document.querySelector(".topbar").inert = true;
+        $("scrim").classList.add("show");
+        $("drawer").classList.add("show");
+        $("drawer").setAttribute("aria-hidden", "false");
+        $("fTitle").focus({ preventScroll: true });
+      }
+      function closeDrawer() {
+        $("workspace").inert = false;
+        document.querySelector(".topbar").inert = false;
+        openId = null;
+        draft = null;
+        isNew = false;
+        $("scrim").classList.remove("show");
+        $("drawer").classList.remove("show");
+        $("drawer").setAttribute("aria-hidden", "true");
+        (drawerReturnFocus?.isConnected
+          ? drawerReturnFocus
+          : $("newTask")).focus();
+      }
+      function renderDrawerSubtasks() {
+        renderDraftLinks();
+        updateCompletionNotice();
+        const done =
+          draft.subtasks.filter((subtask) => subtask.lane === "done")
+            .length;
+        $("subCount").textContent = draft.subtasks.length
+          ? `(${done}/${draft.subtasks.length})`
+          : "";
+        $("subtasks").innerHTML = draft.subtasks.length
+          ? draft.subtasks.map((subtask, index) =>
+            `<div class="drawer-subtask ${
+              subtask.lane === "done" ? "done" : ""
+            }"><input type="checkbox" data-drawer-check="${index}" ${
+              subtask.lane === "done" ? "checked" : ""
+            } aria-label="Mark ${
+              esc(subtask.title)
+            } complete"><span class="title">${
+              esc(subtask.title)
+            }</span><select data-drawer-lane="${index}" aria-label="Lane for ${
+              esc(subtask.title)
+            }">${
+              LANES.map((lane) =>
+                `<option value="${lane.key}" ${
+                  lane.key === subtask.lane ? "selected" : ""
+                }>${lane.name}</option>`
+              ).join("")
+            }</select><button type="button" data-remove-sub="${index}" aria-label="Remove subtask">×</button></div>`
+          ).join("")
+          : '<div class="hint">No subtasks yet.</div>';
+      }
+      $("subtasks").addEventListener("change", (event) => {
+        if (event.target.matches("[data-drawer-check]")) {
+          const subtask =
+            draft.subtasks[Number(event.target.dataset.drawerCheck)];
+          subtask.lane = event.target.checked
+            ? "done"
+            : (draft.lane === "done" ? "today" : draft.lane);
+          subtask.done = subtask.lane === "done";
+          renderDrawerSubtasks();
+          return;
+        }
+        if (event.target.matches("[data-drawer-lane]")) {
+          const subtask =
+            draft.subtasks[Number(event.target.dataset.drawerLane)];
+          subtask.lane = event.target.value;
+          subtask.done = subtask.lane === "done";
+          renderDrawerSubtasks();
+        }
+      });
+      $("subtasks").addEventListener("click", (event) => {
+        const button = event.target.closest("[data-remove-sub]");
+        if (!button) return;
+        const [removed] = draft.subtasks.splice(
+          Number(button.dataset.removeSub),
+          1,
+        );
+        if (removed.id) {
+          draft.links = draft.links.filter((link) =>
+            link.subtaskId !== removed.id
+          );
+        }
+        renderDrawerSubtasks();
+      });
+      $("newSubtask").addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        const title = event.target.value.trim();
+        if (!title) return;
+        const lane = $("fLane").value;
+        draft.subtasks.push({ title, lane, done: lane === "done" });
+        event.target.value = "";
+        renderDrawerSubtasks();
+      });
+      $("addWorkLog").addEventListener("click", async () => {
+        const text = $("workLogText").value.trim();
+        if (!openId || !text) {
+          say("Write a work-log entry first.", true);
+          return;
+        }
+        try {
+          await api(
+            "/api/tasks/" + encodeURIComponent(openId) + "/work-log",
+            {
+              method: "POST",
+              headers: { "If-Match": String(draft.revision) },
+              body: JSON.stringify({
+                kind: $("workLogKind").value,
+                text,
+              }),
+            },
+          );
+          $("workLogText").value = "";
+          await loadWorkLog(openId);
+        } catch (error) {
+          say(error.message, true);
+        }
+      });
+      $("saveTask").addEventListener("click", async () => {
+        const input = {
+          title: $("fTitle").value.trim(),
+          lane: $("fLane").value,
+          priority: Number($("fPriority").value),
+          kind: $("fKind").value,
+          project: $("fProject").value.trim(),
+          tag: $("fTag").value.trim(),
+          notes: $("fNotes").value,
+          subtasks: draft.subtasks,
+          links: draft.links.map(({ ref, url, subtaskId, role }) => ({
+            ref,
+            ...(url ? { url } : {}),
+            subtaskId: subtaskId || "",
+            role: role || "required",
+          })),
+          reconcileMode: $("fReconcileMode").value,
+        };
+        if (!input.title) {
+          say("A task title is required.", true);
+          $("fTitle").focus();
+          return;
+        }
+        try {
+          if (isNew) await createTask(input);
+          else {
+            const id = openId,
+              revision = draft.revision,
+              source = draft.source;
+            await queueTaskWrite(
+              id,
+              () =>
+                api(`/api/tasks/${encodeURIComponent(id)}`, {
+                  method: "PUT",
+                  headers: { "If-Match": String(revision) },
+                  body: JSON.stringify({ ...input, source }),
+                }),
+            );
+          }
+          closeDrawer();
+        } catch (error) {
+          say(error.message, true);
+          if (error.status === 409 || error.status === 404) {
+            try {
+              await refreshTasks();
+            } catch (refreshError) {
+              say(refreshError.message, true);
+            }
+          }
+        }
+      });
+      $("deleteTask").addEventListener("click", async () => {
+        if (
+          !openId ||
+          !confirm("Delete this task and all of its subtasks?")
+        ) return;
+        try {
+          await api(`/api/tasks/${encodeURIComponent(openId)}`, {
+            method: "DELETE",
+            headers: { "If-Match": String(draft.revision) },
+          });
+          closeDrawer();
+        } catch (error) {
+          say(error.message, true);
+          if (error.status === 409 || error.status === 404) {
+            try {
+              await refreshTasks();
+            } catch (refreshError) {
+              say(refreshError.message, true);
+            }
+          }
+        }
+      });
+      $("closeDrawer").addEventListener("click", closeDrawer);
+      $("scrim").addEventListener("click", closeDrawer);
+      document.addEventListener("keydown", (event) => {
+        if (!draft) return;
+        if (event.key === "Escape") closeDrawer();
+        if (event.key === "Tab") {
+          const controls = [
+            ...$("drawer").querySelectorAll(
+              "button, input, textarea, select",
+            ),
+          ].filter((el) => !el.disabled && el.getClientRects().length);
+          const first = controls[0], last = controls.at(-1);
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+          } else if (
+            !event.shiftKey && document.activeElement === last
+          ) {
+            event.preventDefault();
+            first.focus();
+          }
+        }
+      });
+      $("newTask").addEventListener(
+        "click",
+        () =>
+          openDrawer(null, {
+            project: $("projectFilter").value.replace(
+              "__unassigned__",
+              "",
+            ),
+          }),
+      );
+      $("allView").addEventListener("click", () => {
+        view = "all";
+        localStorage.setItem("board.view", view);
+        render();
+      });
+      $("projectView").addEventListener("click", () => {
+        view = "project";
+        localStorage.setItem("board.view", view);
+        render();
+      });
+      ["focus", "reviews", "everything"].forEach((mode) => {
+        $(`${mode}View`).addEventListener("click", () => {
+          focus = mode;
+          localStorage.setItem("board.focus", focus);
+          render();
+        });
+      });
+      $("doneToggle").addEventListener("click", () => {
+        hideDone = !hideDone;
+        localStorage.setItem("board.hideDone", hideDone ? "1" : "0");
+        render();
+      });
+      $("search").addEventListener("input", render);
+      $("projectFilter").addEventListener("change", render);
+      $("themeBtn").addEventListener("click", () => {
+        const next = document.documentElement.dataset.theme === "dark"
+          ? "light"
+          : "dark";
+        document.documentElement.dataset.theme = next;
+        localStorage.setItem("board.theme", next);
+      });
+      function playChime() {
+        try {
+          const AudioContext = window.AudioContext ||
+              window.webkitAudioContext,
+            context = new AudioContext();
+          [880, 1174.7, 1318.5].forEach((frequency, index) => {
+            const oscillator = context.createOscillator(),
+              gain = context.createGain(),
+              start = context.currentTime + index * .17;
+            oscillator.frequency.value = frequency;
+            gain.gain.setValueAtTime(.0001, start);
+            gain.gain.exponentialRampToValueAtTime(.15, start + .02);
+            gain.gain.exponentialRampToValueAtTime(.0001, start + .8);
+            oscillator.connect(gain);
+            gain.connect(context.destination);
+            oscillator.start(start);
+            oscillator.stop(start + .85);
+          });
+          setTimeout(() => context.close(), 1800);
+        } catch {
+          /* Chime is optional when browser audio is unavailable. */
+        }
+      }
+      function chimeNow() {
+        const doing = tasks.filter((task) => task.lane === "doing"),
+          today = tasks.filter((task) => task.lane === "today"),
+          message = doing.length
+            ? `In progress: ${doing[0].title}${
+              doing.length > 1 ? ` (+${doing.length - 1} more)` : ""
+            }`
+            : today.length
+            ? `${today.length} queued for today.`
+            : "Board is clear.";
+        say(message);
+        playChime();
+        if (
+          window.Notification && Notification.permission === "granted"
+        ) {
+          new Notification("Hourly check-in", {
+            body: message,
+            tag: "todo-board",
+          });
+        }
+      }
+      function scheduleChime() {
+        clearTimeout(chimeTimer);
+        if (!chimeOn) return;
+        const now = new Date(), next = new Date(now);
+        next.setHours(now.getHours() + 1, 0, 0, 0);
+        chimeTimer = setTimeout(() => {
+          chimeNow();
+          scheduleChime();
+        }, next - now);
+      }
+      $("chimeBtn").addEventListener("click", () => {
+        chimeOn = !chimeOn;
+        localStorage.setItem("board.chime", chimeOn ? "1" : "0");
+        $("chimeBtn").textContent = chimeOn ? "Chime on" : "Chime off";
+        $("chimeBtn").classList.toggle("active", chimeOn);
+        if (chimeOn) {
+          playChime();
+          if (
+            window.Notification && Notification.permission === "default"
+          ) Notification.requestPermission();
+          say("Hourly chime enabled. Keep this tab open.");
+          scheduleChime();
+        } else clearTimeout(chimeTimer);
+      });
+      function tickClock() {
+        $("clock").textContent = new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+      }
+      tickClock();
+      setInterval(tickClock, 15000);
+      const savedTheme = localStorage.getItem("board.theme");
+      if (savedTheme) {
+        document.documentElement.dataset.theme = savedTheme;
+      }
+      $("chimeBtn").textContent = chimeOn ? "Chime on" : "Chime off";
+      $("chimeBtn").classList.toggle("active", chimeOn);
+      scheduleChime();
+      render();
+      api("/api/tasks").then((data) => {
+        tasks = normalizeTasks(data.tasks);
+        render();
+      }).catch((error) => {
+        status("offline", "off");
+        say(error.message, true);
+      });
+      const events = new EventSource("/api/events");
+      events.addEventListener("tasks", (event) => {
+        if (pendingWrites) queuedSnapshot = event.data;
+        else applySnapshot(event.data);
+      });
+      $("workspace").addEventListener("animationend", (event) => {
+        event.target.classList.remove("revealing");
+      });
+      events.onopen = () => status("live", "live");
+      events.onerror = () => status("reconnecting", "off");
+    </script>
+  </body>
+</html>

@@ -1,0 +1,10 @@
+/data/*
+!/data/.gitkeep
+/bin/
+/.exec-plans/
+/PLANS.md
+.DS_Store
+__pycache__/
+.remember/
+.ruff_cache/
+.claude/settings.local.json

@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+todo_url="${TODO_URL:-http://127.0.0.1:7337}"
+codex_home="${CODEX_HOME:-$HOME/.codex}"
+failures=0
+
+check() {
+  local name=$1 fix=$2
+  shift 2
+  if "$@" >/dev/null 2>&1; then
+    printf 'ok    %s\n' "$name"
+  else
+    printf 'FAIL  %s\n      fix: %s\n' "$name" "$fix"
+    failures=$((failures + 1))
+  fi
+}
+
+skip() { printf 'skip  %s\n' "$*"; }
+
+check "Docker engine running" "start Docker Desktop or OrbStack" docker info
+check "board answers at $todo_url" "run: docker compose -f $repo/docker-compose.yml up -d" curl -fsS --max-time 3 "$todo_url/healthz"
+check "todo on PATH" "add ~/.local/bin to PATH in ~/.zshrc, then rerun scripts/team-setup" command -v todo
+check "todo points at this clone" "move ~/.local/bin/todo aside and rerun scripts/team-setup" \
+  test "$(readlink "$HOME/.local/bin/todo" 2>/dev/null)" = "$repo/scripts/todo"
+check "todo health" "see the board check above" "$repo/scripts/todo" health
+
+if command -v claude >/dev/null 2>&1; then
+  check "Claude plugin todo-board enabled" "rerun scripts/team-setup, or: claude plugin install todo-board@kcompton15" \
+    bash -c 'claude plugin list --json | jq -e ".[] | select(.id == \"todo-board@kcompton15\" and .enabled)"'
+else
+  skip "Claude Code not installed"
+fi
+
+if command -v codex >/dev/null 2>&1; then
+  check "Codex AGENTS.md board block" "run scripts/install-codex-integration" \
+    grep -qxF '<!-- TODO-BOARD:BEGIN -->' "$codex_home/AGENTS.md"
+  check "Codex SessionStart board hook" "run scripts/install-codex-integration" \
+    jq -e '[.hooks.SessionStart[]?.hooks[]?.command // empty | select(endswith("/scripts/board-context.sh"))] | length > 0' "$codex_home/hooks.json"
+else
+  skip "Codex not installed"
+fi
+
+if [[ -x "$HOME/.local/bin/board-reconciler" ]]; then
+  check "reconciler config" "run scripts/install-board-reconciler --configure" \
+    jq -e '(.gitlabUser | length > 0) and (.jiraEmail | length > 0) and (.jiraSite | length > 0)' "$HOME/.config/todo-board/reconciler.json"
+  check "reconciler status" "see docs/RECONCILER.md" "$HOME/.local/bin/board-reconciler" --status --todo-url "$todo_url"
+  agents=$(find "$HOME/Library/LaunchAgents" -name '*.board-reconciler.plist' 2>/dev/null | wc -l | tr -d ' ')
+  printf 'info  reconciler launchd agents installed: %s\n' "$agents"
+else
+  skip "reconciler not installed (optional)"
+fi
+
+if ((failures)); then
+  printf '\n%d check(s) failed.\n' "$failures"
+  exit 1
+fi
+printf '\nAll checks passed.\n'

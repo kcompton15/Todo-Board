@@ -1,0 +1,17 @@
+{
+  "source": "chat-claude",
+  "ops": [
+    {
+      "op": "create",
+      "title": "Confirm the task-board inbox transport",
+      "lane": "today",
+      "priority": 2,
+      "project": "Internal Tools",
+      "tag": "Board",
+      "subtasks": [
+        "Verify this file is archived under .processed",
+        "Confirm the open browser updates without a reload"
+      ]
+    }
+  ]
+}

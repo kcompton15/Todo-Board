@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+usage: scripts/team-setup [--dry-run] [--with-reconciler] [--with-notifier] [--skip-claude] [--skip-codex]
+
+Starts the local board container, links the todo CLI, registers the todo-board Claude Code
+plugin and wires Codex. Safe to rerun. Env: TODO_PORT (default 7337), TODO_CONTAINER_NAME.
+EOF
+}
+
+die() {
+  printf 'team-setup: %s\n' "$*" >&2
+  exit 1
+}
+
+dry_run=false with_reconciler=false with_notifier=false skip_claude=false skip_codex=false
+for argument in "$@"; do
+  case "$argument" in
+    --dry-run) dry_run=true ;;
+    --with-reconciler) with_reconciler=true ;;
+    --with-notifier) with_notifier=true ;;
+    --skip-claude) skip_claude=true ;;
+    --skip-codex) skip_codex=true ;;
+    -h | --help) usage && exit 0 ;;
+    *) usage >&2 && exit 1 ;;
+  esac
+done
+
+repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+port="${TODO_PORT:-7337}"
+[[ "$port" =~ ^[0-9]+$ ]] || die "TODO_PORT must be a number"
+export TODO_URL="http://127.0.0.1:$port"
+bin_dir="$HOME/.local/bin"
+todo_link="$bin_dir/todo"
+step=0
+
+say() { printf '%s\n' "$*"; }
+heading() {
+  step=$((step + 1))
+  printf '\n[%d] %s\n' "$step" "$*"
+}
+run() {
+  if [[ "$dry_run" == true ]]; then
+    printf '  would run: %s\n' "$*"
+  else
+    "$@"
+  fi
+}
+have() { command -v "$1" >/dev/null 2>&1; }
+
+heading "Preflight"
+[[ "$(uname -s)" == Darwin ]] || die "this setup targets macOS"
+for tool in git curl jq docker; do
+  have "$tool" || die "'$tool' is missing.$([[ "$tool" == docker ]] && printf ' Install Docker Desktop or OrbStack, start it, and rerun.')"
+done
+docker info >/dev/null 2>&1 || die "Docker is installed but not running. Start Docker Desktop or OrbStack and rerun."
+say "  macOS, git, curl, jq and a running Docker engine: ok"
+path_ok=true
+[[ ":$PATH:" == *":$bin_dir:"* ]] || path_ok=false
+[[ "$path_ok" == true ]] || say "  note: $bin_dir is not on PATH; the summary shows the one-line fix"
+have_claude=false have_codex=false
+[[ "$skip_claude" == false ]] && have claude && have_claude=true
+[[ "$skip_codex" == false ]] && have codex && have_codex=true
+say "  Claude Code: $([[ "$have_claude" == true ]] && echo found || echo skipped)  Codex: $([[ "$have_codex" == true ]] && echo found || echo skipped)"
+
+heading "Board container on 127.0.0.1:$port"
+run docker compose -f "$repo/docker-compose.yml" up -d --build
+if [[ "$dry_run" == false ]]; then
+  for _ in $(seq 1 60); do
+    curl -fsS --max-time 2 "$TODO_URL/healthz" >/dev/null 2>&1 && break
+    sleep 1
+  done
+  curl -fsS --max-time 2 "$TODO_URL/healthz" >/dev/null 2>&1 ||
+    die "the board did not answer at $TODO_URL/healthz within 60s; check 'docker compose logs board'"
+  say "  healthy at $TODO_URL"
+fi
+
+heading "todo CLI"
+if [[ -L "$todo_link" && "$(readlink "$todo_link")" == "$repo/scripts/todo" ]]; then
+  say "  $todo_link already points at this clone"
+elif [[ -e "$todo_link" || -L "$todo_link" ]]; then
+  die "$todo_link already exists and points elsewhere ($(readlink "$todo_link" || echo 'not a symlink')). Move it aside and rerun."
+else
+  run mkdir -p "$bin_dir"
+  run ln -s "$repo/scripts/todo" "$todo_link"
+  [[ "$dry_run" == true ]] || say "  linked $todo_link"
+fi
+
+heading "Claude Code plugin"
+if [[ "$have_claude" == true ]]; then
+  if claude plugin marketplace list --json | jq -e '.[] | select(.name == "kcompton15")' >/dev/null; then
+    say "  marketplace kcompton15 already registered"
+  else
+    run claude plugin marketplace add "$repo"
+  fi
+  if claude plugin list --json | jq -e '.[] | select(.id == "todo-board@kcompton15" and .enabled)' >/dev/null; then
+    say "  todo-board already installed and enabled"
+  else
+    run claude plugin install todo-board@kcompton15
+  fi
+else
+  say "  skipped (claude not found or --skip-claude)"
+fi
+
+heading "Codex"
+if [[ "$have_codex" == true ]]; then
+  if [[ "$dry_run" == true ]]; then
+    "$repo/scripts/install-codex-integration" --dry-run | sed 's/^/  /'
+  else
+    "$repo/scripts/install-codex-integration" | sed 's/^/  /'
+  fi
+else
+  say "  skipped (codex not found or --skip-codex)"
+fi
+
+if [[ "$with_notifier" == true ]]; then
+  heading "Weekday 09:00 notifier"
+  run "$repo/scripts/install-board-notifier"
+fi
+
+if [[ "$with_reconciler" == true ]]; then
+  heading "Board reconciler"
+  run make -C "$repo" build-darwin
+  run "$repo/scripts/install-board-reconciler" --configure
+  run "$repo/scripts/install-board-reconciler" --disable
+  run "$repo/scripts/install-board-reconciler" --probe
+  say "  Review the probe result above, then enable it with:"
+  say "    $repo/scripts/install-board-reconciler --enable"
+fi
+
+printf '\nDone%s.\n' "$([[ "$dry_run" == true ]] && echo ' (dry run, nothing changed)')"
+say "  Board:  $TODO_URL"
+[[ "$path_ok" == true ]] || say "  PATH:   echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.zshrc && exec zsh"
+[[ "$port" == 7337 ]] || say "  Port:   echo 'export TODO_URL=$TODO_URL' >> ~/.zshrc   (the CLI defaults to 7337)"
+say "  Next:   start a new Claude Code or Codex session; the board rules and active cards load at start."
+say "  Check:  $repo/scripts/board-doctor"
