@@ -307,11 +307,11 @@
       .dropdown-list li.active {
         background-color: var(--accent-soft);
       }
-      .dropdown-list li[aria-selected="true"] {
+      .dropdown-list li.committed {
         color: var(--accent);
         font-weight: 650;
       }
-      .dropdown-list li[aria-selected="true"]::before {
+      .dropdown-list li.committed::before {
         content: "";
         position: absolute;
         left: 10px;
@@ -1873,6 +1873,11 @@
         const isOpen = () =>
           !list.hidden && list.matches(":popover-open");
         const items = () => [...list.children];
+        function markSelected(index) {
+          items().forEach((item, i) =>
+            item.setAttribute("aria-selected", String(i === index))
+          );
+        }
         function highlight(index) {
           const all = items();
           if (!all.length) return;
@@ -1880,6 +1885,7 @@
           all.forEach((item, i) =>
             item.classList.toggle("active", i === activeIndex)
           );
+          markSelected(activeIndex);
           button.setAttribute(
             "aria-activedescendant",
             all[activeIndex].id,
@@ -1905,9 +1911,9 @@
             }));
           }
           items().forEach((item, index) =>
-            item.setAttribute(
-              "aria-selected",
-              String(index === select.selectedIndex),
+            item.classList.toggle(
+              "committed",
+              index === select.selectedIndex,
             )
           );
           const label = select.selectedOptions[0]?.label || "";
@@ -1917,7 +1923,7 @@
             const kept = values.indexOf(activeValue);
             highlight(kept >= 0 ? kept : select.selectedIndex);
             place();
-          }
+          } else markSelected(select.selectedIndex);
         }
         function place() {
           const rect = button.getBoundingClientRect(),
@@ -1939,16 +1945,18 @@
           const height = list.offsetHeight,
             below = innerHeight - rect.bottom - gap - margin,
             above = rect.top - gap - margin,
-            openAbove = height > below && above > below,
-            maxHeight = Math.max(
-              120,
-              Math.min(320, openAbove ? above : below),
-            );
-          list.style.maxHeight = maxHeight + "px";
-          list.style.top =
-            (openAbove
-              ? rect.top - gap - Math.min(height, maxHeight)
-              : rect.bottom + gap) + "px";
+            openAbove = height > below && above > below;
+          list.style.maxHeight =
+            Math.max(0, Math.min(320, openAbove ? above : below)) +
+            "px";
+          const rendered = list.offsetHeight,
+            top = openAbove
+              ? rect.top - gap - rendered
+              : rect.bottom + gap;
+          list.style.top = Math.max(
+            margin,
+            Math.min(top, innerHeight - margin - rendered),
+          ) + "px";
           list.style.left = Math.min(
             Math.max(rect.left, margin),
             innerWidth - list.offsetWidth - margin,
@@ -1988,6 +1996,7 @@
           removeEventListener("scroll", onScroll, true);
           typed = "";
           clearTimeout(typedTimer);
+          sync();
         }
         function commit(index) {
           const option = select.options[index];
@@ -1997,7 +2006,6 @@
               new Event("change", { bubbles: true }),
             );
           }
-          sync();
           close();
           button.focus();
         }

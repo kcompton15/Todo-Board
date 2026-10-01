@@ -131,6 +131,15 @@ ACTIVE_OPTION = """() => {
   return id ? document.getElementById(id).textContent : null;
 }"""
 
+SELECTION = """() => {
+  const items = [...document.querySelectorAll("#projectFilterList [role=option]")];
+  const pick = (test) => items.filter(test).map((item) => item.textContent);
+  return {
+    selected: pick((item) => item.getAttribute("aria-selected") === "true"),
+    committed: pick((item) => item.classList.contains("committed")),
+  };
+}"""
+
 
 def dropdown_parts(page):
     return (
@@ -143,6 +152,21 @@ def dropdown_parts(page):
 def expect_closed(button, listbox):
     expect(button).to_have_attribute("aria-expanded", "false")
     assert not listbox.evaluate("e => e.matches(':popover-open')")
+
+
+def expect_selection(page, selected, committed, label):
+    state = page.evaluate(SELECTION)
+    expected = {"selected": [selected], "committed": [committed]}
+    assert state == expected, f"{label}: selection {state}, wanted {expected}"
+
+
+def expect_within_window(page, label):
+    geo = page.evaluate(DROPDOWN_GEOMETRY)
+    list_box = geo["list"]
+    assert list_box["top"] >= 7.5, f"{label}: {geo}"
+    assert list_box["left"] >= 7.5, f"{label}: {geo}"
+    assert list_box["bottom"] <= geo["height"] - 7.5, f"{label}: {geo}"
+    assert list_box["right"] <= geo["width"] - 7.5, f"{label}: {geo}"
 
 
 def check_project_dropdown(browser, evidence, ids):
@@ -176,9 +200,11 @@ def check_project_dropdown(browser, evidence, ids):
             path=str(evidence / f"dropdown-open-{width}-{scheme}.png"),
             animations="disabled",
         )
+        expect_selection(page, "All projects", "All projects", label)
         first = button.get_attribute("aria-activedescendant")
         page.keyboard.press("ArrowDown")
         assert button.get_attribute("aria-activedescendant") != first, label
+        expect_selection(page, page.evaluate(ACTIVE_OPTION), "All projects", label)
         page.keyboard.press("End")
         assert page.evaluate(ACTIVE_OPTION) == "Unassigned", label
         page.keyboard.press("Home")
@@ -189,6 +215,7 @@ def check_project_dropdown(browser, evidence, ids):
         expect_closed(button, listbox)
         assert page.evaluate("document.activeElement.id") == "projectFilterButton", label
         expect(button).to_have_text(billing)
+        expect_selection(page, billing, billing, label)
         shown = page.locator(".card[data-task-id]").evaluate_all(
             "cards => cards.map(card => card.dataset.taskId)"
         )
@@ -196,16 +223,20 @@ def check_project_dropdown(browser, evidence, ids):
 
         page.keyboard.press("ArrowDown")
         page.keyboard.press("ArrowDown")
+        expect_selection(page, page.evaluate(ACTIVE_OPTION), billing, label)
         page.keyboard.press("Escape")
         expect_closed(button, listbox)
         assert select.evaluate("e => e.value") == billing, label
+        expect_selection(page, billing, billing, label)
 
         page.keyboard.press("ArrowDown")
         page.keyboard.press("Home")
+        expect_selection(page, "All projects", billing, label)
         page.keyboard.press("Tab")
         expect_closed(button, listbox)
         assert page.evaluate("document.activeElement.id") == "doneToggle", label
         assert select.evaluate("e => e.value") == billing, label
+        expect_selection(page, billing, billing, label)
 
         button.click()
         expect(button).to_have_attribute("aria-expanded", "true")
@@ -216,9 +247,12 @@ def check_project_dropdown(browser, evidence, ids):
 
         button.click()
         expect(button).to_have_attribute("aria-expanded", "true")
+        page.keyboard.press("ArrowDown")
+        expect_selection(page, page.evaluate(ACTIVE_OPTION), "All projects", label)
         page.locator("#summary").click(position={"x": 4, "y": 4})
         expect_closed(button, listbox)
         assert select.evaluate("e => e.value") == "", label
+        expect_selection(page, "All projects", "All projects", label)
 
         button.click()
         renamed = f"{prefix}-Renamed"
@@ -233,14 +267,18 @@ def check_project_dropdown(browser, evidence, ids):
         expect_closed(button, listbox)
         finish(context, errors, label)
 
-    context, page, errors = open_page(browser, 1280, "light", height=260)
-    button, listbox, _ = dropdown_parts(page)
-    button.click()
-    geo = page.evaluate(DROPDOWN_GEOMETRY)
-    assert geo["list"]["bottom"] <= geo["height"] - 7.5, f"short viewport: {geo}"
-    assert geo["list"]["top"] >= 7.5, f"short viewport: {geo}"
-    page.screenshot(path=str(evidence / "dropdown-open-short.png"), animations="disabled")
-    finish(context, errors, "dropdown short viewport")
+    for height in [260, 180]:
+        label = f"dropdown 1280x{height}"
+        context, page, errors = open_page(browser, 1280, "light", height=height)
+        button, listbox, _ = dropdown_parts(page)
+        button.click()
+        expect(button).to_have_attribute("aria-expanded", "true")
+        expect_within_window(page, label)
+        page.screenshot(
+            path=str(evidence / f"dropdown-open-short-{height}.png"),
+            animations="disabled",
+        )
+        finish(context, errors, label)
 
 
 CHECKS = {
@@ -263,7 +301,7 @@ def selected_checks():
     return names
 
 
-def seed(prefix):
+def seed(prefix, ids):
     billing = f"{prefix}-Billing"
     inputs = {
         "billing": {
@@ -314,13 +352,33 @@ def seed(prefix):
         },
     }
     created = api("POST", "/api/tasks", {"tasks": list(inputs.values())})["tasks"]
-    ids = {role: task["id"] for role, task in zip(inputs, created)}
+    ids.update({role: task["id"] for role, task in zip(inputs, created)})
     for entry in [
         {"kind": "progress", "text": "Failing test committed"},
         {"kind": "decision", "text": "Generate key client-side"},
     ]:
         api("POST", f"/api/tasks/{ids['billing']}/work-log", entry)
-    return ids
+
+
+def cleanup(ids, baseline):
+    created = [value for key, value in ids.items() if key != "prefix"]
+    problems = []
+    for task_id in created:
+        try:
+            api("DELETE", "/api/tasks/" + task_id)
+        except (OSError, ValueError) as error:
+            problems.append(f"DELETE {task_id}: {error}")
+    try:
+        current = {task["id"]: task for task in api("GET", "/api/tasks")["tasks"]}
+    except (OSError, ValueError) as error:
+        return problems + [f"GET /api/tasks: {error}"]
+    remaining = sorted(set(created) & set(current))
+    if remaining:
+        problems.append(f"QA cards remain: {remaining}")
+    for task_id, original in baseline.items():
+        if current.get(task_id) != original:
+            problems.append("Real task changed: " + task_id)
+    return problems
 
 
 def main():
@@ -329,10 +387,9 @@ def main():
     prefix = "QA-Polish-" + uuid.uuid4().hex[:10]
     evidence = Path(tempfile.mkdtemp(prefix="todo-ui-polish-"))
     baseline = {task["id"]: task for task in api("GET", "/api/tasks")["tasks"]}
-    ids = {}
+    ids = {"prefix": prefix}
     try:
-        ids = seed(prefix)
-        ids["prefix"] = prefix
+        seed(prefix, ids)
         (evidence / "ids.json").write_text(json.dumps(ids, indent=2))
         with sync_playwright() as p:
             browser = p.chromium.launch()
@@ -342,14 +399,13 @@ def main():
         print("PASS:", ", ".join(names))
         print("Evidence:", evidence)
     finally:
-        created = [value for key, value in ids.items() if key != "prefix"]
-        for task_id in created:
-            api("DELETE", "/api/tasks/" + task_id)
-        current = {task["id"]: task for task in api("GET", "/api/tasks")["tasks"]}
-        assert not set(created) & set(current), "QA cards remain"
-        for task_id, original in baseline.items():
-            assert current[task_id] == original, "Real task changed: " + task_id
-        print("Exact-ID QA cleanup complete; original tasks unchanged.")
+        problems = cleanup(ids, baseline)
+        for problem in problems:
+            print("Cleanup problem:", problem, file=sys.stderr)
+        if not problems:
+            print("Exact-ID QA cleanup complete; original tasks unchanged.")
+    if problems:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
