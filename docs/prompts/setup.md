@@ -5,7 +5,7 @@ Paste this into Claude Code or Codex. If the repo isn't cloned yet, the agent cl
 ```text
 Set up the Todo Board task board on this Mac.
 
-1. If I am not already inside a Todo-Board clone, clone git@github.com:kcompton15/Todo-Board.git.
+1. If I am not already inside a Todo-Board clone, clone https://github.com/kcompton15/Todo-Board.git.
    Ask me where to put it.
 2. Read docs/SETUP.md in the clone and follow its Install section.
 3. Run scripts/team-setup.

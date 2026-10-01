@@ -95,9 +95,14 @@ if [[ "$have_claude" == true ]]; then
   else
     run claude plugin marketplace add "$repo"
   fi
-  if claude plugin list --json | jq -e '.[] | select(.id == "todo-board@kcompton15" and .enabled)' >/dev/null; then
-    say "  todo-board already installed and enabled"
+  installed=$(claude plugin list --json | jq -r '.[] | select(.id == "todo-board@kcompton15" and .enabled) | .installPath // "unknown"')
+  if [[ -z "$installed" ]]; then
+    run claude plugin install todo-board@kcompton15
+  elif diff -rq "$repo/plugin" "$installed" >/dev/null 2>&1; then
+    say "  todo-board already installed, enabled and current"
   else
+    say "  todo-board's installed copy differs from this clone; reinstalling"
+    run claude plugin uninstall todo-board@kcompton15
     run claude plugin install todo-board@kcompton15
   fi
 else

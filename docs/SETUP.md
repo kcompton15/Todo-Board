@@ -16,7 +16,7 @@ You don't need Go. Anything that has to be compiled for your Mac is built inside
 ## Install
 
 ```bash
-git clone git@github.com:kcompton15/Todo-Board.git
+git clone https://github.com/kcompton15/Todo-Board.git
 cd Todo-Board
 scripts/team-setup
 ```
@@ -78,7 +78,7 @@ todo help
 cd Todo-Board && git pull && scripts/team-setup
 ```
 
-The Claude plugin is read straight from your clone, so new rules and commands apply at the next session start, or after `/reload-plugins`. Rerunning `team-setup` rebuilds the container when server code changed and refreshes the Codex block.
+Rerunning `team-setup` rebuilds the container when server code changed, reinstalls the Claude plugin when your clone's copy has changed, and refreshes the Codex block. New rules and commands apply at the next session start.
 
 ## Optional: Jira links
 

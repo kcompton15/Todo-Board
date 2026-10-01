@@ -24,10 +24,10 @@ case "$*" in
   "plugin marketplace list --json")
     if [[ -f "$state/marketplace" ]]; then printf '[{"name":"kcompton15"}]'; else printf '[]'; fi ;;
   "plugin list --json")
-    if [[ -f "$state/plugin" ]]; then printf '[{"id":"todo-board@kcompton15","enabled":true}]'; else printf '[]'; fi ;;
+    if [[ -f "$state/plugin" ]]; then printf '[{"id":"todo-board@kcompton15","enabled":true,"installPath":"%s"}]' "$state/cache"; else printf '[]'; fi ;;
   "plugin marketplace add "*) touch "$state/marketplace" ;;
-  "plugin install todo-board@kcompton15") touch "$state/plugin" ;;
-  "plugin uninstall todo-board@kcompton15") rm -f "$state/plugin" ;;
+  "plugin install todo-board@kcompton15") touch "$state/plugin" && rm -rf "$state/cache" && cp -R "$FAKE_PLUGIN_SOURCE" "$state/cache" ;;
+  "plugin uninstall todo-board@kcompton15") rm -rf "$state/plugin" "$state/cache" ;;
   "plugin marketplace remove kcompton15") rm -f "$state/marketplace" ;;
   *) exit 64 ;;
 esac
@@ -77,6 +77,7 @@ func newTeamEnv(t *testing.T) teamEnv {
 		"HOME=" + home,
 		"PATH=" + fake + ":" + filepath.Join(home, ".local", "bin") + ":/usr/bin:/bin:/usr/sbin:/sbin",
 		"FAKE_STATE=" + state,
+		"FAKE_PLUGIN_SOURCE=" + filepath.Join(repo, "plugin"),
 		"TODO_PORT=" + port,
 	}}
 }
@@ -131,6 +132,18 @@ func TestTeamSetupInstallsIdempotentlyAndUninstalls(t *testing.T) {
 	}
 	if strings.Count(e.calls(t), "plugin install") != 1 || strings.Count(e.calls(t), "marketplace add") != 1 {
 		t.Fatalf("rerun repeated plugin installs:\n%s", e.calls(t))
+	}
+
+	stale := filepath.Join(e.state, "cache", "rules", "board-rules.md")
+	if err := os.WriteFile(stale, []byte("old rules\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output, err = e.run(t, "team-setup")
+	if err != nil || !strings.Contains(output, "reinstalling") {
+		t.Fatalf("stale plugin rerun: %v\n%s", err, output)
+	}
+	if strings.Count(e.calls(t), "plugin install") != 2 || readFile(t, stale) == "old rules\n" {
+		t.Fatalf("stale plugin copy was not refreshed:\n%s", e.calls(t))
 	}
 	if readFile(t, filepath.Join(e.home, ".codex", "AGENTS.md")) != agents {
 		t.Fatal("rerun changed AGENTS.md")

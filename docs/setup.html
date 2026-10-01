@@ -182,7 +182,7 @@
       <h2>Install</h2>
       <div class="term">
         <div class="term-bar"><span>zsh</span><button class="copy" type="button" data-copy="install">Copy</button></div>
-        <pre id="install-cmd"><code>git clone git@github.com:kcompton15/Todo-Board.git
+        <pre id="install-cmd"><code>git clone https://github.com/kcompton15/Todo-Board.git
 cd Todo-Board
 scripts/team-setup</code></pre>
       </div>
@@ -238,7 +238,7 @@ todo help</code></pre>
         <div class="term-bar"><span>zsh</span><button class="copy" type="button" data-copy="update">Copy</button></div>
         <pre id="update-cmd"><code>cd Todo-Board &amp;&amp; git pull &amp;&amp; scripts/team-setup</code></pre>
       </div>
-      <p>The Claude plugin is read straight from your clone, so new rules and commands apply at the next session start, or after <code>/reload-plugins</code>. Rerunning setup rebuilds the container when server code changed and refreshes the Codex block.</p>
+      <p>Rerunning setup rebuilds the container when server code changed, reinstalls the Claude plugin when your clone's copy has changed, and refreshes the Codex block. New rules and commands apply at the next session start.</p>
     </section>
 
     <section id="jira">
