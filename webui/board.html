@@ -234,6 +234,94 @@
       .search:focus, .select:focus {
         border-color: var(--accent);
       }
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+      }
+      .dropdown {
+        position: relative;
+        flex: 0 1 190px;
+        min-width: 0;
+      }
+      .dropdown-button {
+        display: flex;
+        align-items: center;
+        width: 100%;
+        min-height: 36px;
+        padding: 6px 32px 6px 11px;
+        border: 1px solid var(--line-strong);
+        border-radius: 9px;
+        background-color: var(--surface);
+        text-align: left;
+      }
+      .dropdown-button:hover, .dropdown-button[aria-expanded="true"] {
+        border-color: var(--accent);
+      }
+      .dropdown-value {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .chevron {
+        background-image:
+          linear-gradient(45deg, transparent 50%, currentColor 50%),
+          linear-gradient(135deg, currentColor 50%, transparent 50%);
+        background-position:
+          calc(100% - 16px) 52%,
+          calc(100% - 11px) 52%;
+        background-size: 5px 5px, 5px 5px;
+        background-repeat: no-repeat;
+      }
+      .chevron[aria-expanded="true"] {
+        background-image:
+          linear-gradient(135deg, transparent 50%, currentColor 50%),
+          linear-gradient(45deg, currentColor 50%, transparent 50%);
+      }
+      .dropdown-list {
+        position: fixed;
+        inset: auto;
+        margin: 0;
+        padding: 4px;
+        border: 1px solid var(--line-strong);
+        border-radius: 10px;
+        background-color: var(--surface);
+        color: var(--ink);
+        box-shadow: var(--shadow);
+        overflow-y: auto;
+        list-style: none;
+        overscroll-behavior: contain;
+      }
+      .dropdown-list li {
+        position: relative;
+        padding: 7px 10px 7px 28px;
+        border-radius: 7px;
+        cursor: pointer;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .dropdown-list li.active {
+        background-color: var(--accent-soft);
+      }
+      .dropdown-list li[aria-selected="true"] {
+        color: var(--accent);
+        font-weight: 650;
+      }
+      .dropdown-list li[aria-selected="true"]::before {
+        content: "";
+        position: absolute;
+        left: 10px;
+        top: calc(50% - 5px);
+        width: 9px;
+        height: 5px;
+        border-left: 2px solid currentColor;
+        border-bottom: 2px solid currentColor;
+        transform: rotate(-45deg);
+      }
       .banner {
         display: none;
         padding: 9px 16px;
@@ -872,6 +960,9 @@
           width: auto;
           min-width: 0;
         }
+        .dropdown {
+          flex: 1 1 160px;
+        }
         .controls > .btn {
           flex: 1 0 auto;
         }
@@ -1047,13 +1138,33 @@
           placeholder="Search work"
           aria-label="Search tasks and subtasks"
         >
-        <select
-          class="select"
-          id="projectFilter"
-          aria-label="Filter by project"
-        >
-          <option value="">All projects</option>
-        </select>
+        <div class="dropdown" id="projectFilterDropdown">
+          <span class="sr-only" id="projectFilterLabel">Project filter</span>
+          <button
+            type="button"
+            class="dropdown-button chevron"
+            id="projectFilterButton"
+            role="combobox"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            aria-controls="projectFilterList"
+            aria-labelledby="projectFilterLabel"
+          >
+            <span class="dropdown-value">All projects</span>
+          </button>
+          <ul
+            class="dropdown-list"
+            id="projectFilterList"
+            role="listbox"
+            popover="manual"
+            aria-labelledby="projectFilterLabel"
+            tabindex="-1"
+          >
+          </ul>
+          <select id="projectFilter" hidden aria-hidden="true" tabindex="-1">
+            <option value="">All projects</option>
+          </select>
+        </div>
         <button class="btn" id="doneToggle" type="button">Hide done</button>
       </div>
     </header>
@@ -1751,6 +1862,241 @@
               ));
         });
       }
+      function createDropdown(select, button, list) {
+        const root = button.closest(".dropdown"),
+          valueLabel = button.querySelector(".dropdown-value");
+        let activeIndex = -1,
+          signature = "",
+          values = [],
+          typed = "",
+          typedTimer = null;
+        const isOpen = () =>
+          !list.hidden && list.matches(":popover-open");
+        const items = () => [...list.children];
+        function highlight(index) {
+          const all = items();
+          if (!all.length) return;
+          activeIndex = Math.max(0, Math.min(index, all.length - 1));
+          all.forEach((item, i) =>
+            item.classList.toggle("active", i === activeIndex)
+          );
+          button.setAttribute(
+            "aria-activedescendant",
+            all[activeIndex].id,
+          );
+          all[activeIndex].scrollIntoView({ block: "nearest" });
+        }
+        function sync() {
+          const options = [...select.options],
+            next = options.map((option) =>
+              option.value + "\u0000" + option.label
+            ).join("\u0001"),
+            activeValue = values[activeIndex];
+          if (next !== signature) {
+            signature = next;
+            values = options.map((option) => option.value);
+            list.replaceChildren(...options.map((option, index) => {
+              const item = document.createElement("li");
+              item.id = `${list.id}-${index}`;
+              item.dataset.index = String(index);
+              item.setAttribute("role", "option");
+              item.textContent = option.label;
+              return item;
+            }));
+          }
+          items().forEach((item, index) =>
+            item.setAttribute(
+              "aria-selected",
+              String(index === select.selectedIndex),
+            )
+          );
+          const label = select.selectedOptions[0]?.label || "";
+          valueLabel.textContent = label;
+          button.title = label;
+          if (isOpen()) {
+            const kept = values.indexOf(activeValue);
+            highlight(kept >= 0 ? kept : select.selectedIndex);
+            place();
+          }
+        }
+        function place() {
+          const rect = button.getBoundingClientRect(),
+            gap = 4,
+            margin = 8;
+          if (
+            rect.bottom < 0 || rect.top > innerHeight ||
+            rect.right < 0 ||
+            rect.left > innerWidth
+          ) {
+            close();
+            return;
+          }
+          const scrollTop = list.scrollTop;
+          list.style.minWidth = rect.width + "px";
+          list.style.maxWidth = Math.min(360, innerWidth - 2 * margin) +
+            "px";
+          list.style.maxHeight = "";
+          const height = list.offsetHeight,
+            below = innerHeight - rect.bottom - gap - margin,
+            above = rect.top - gap - margin,
+            openAbove = height > below && above > below,
+            maxHeight = Math.max(
+              120,
+              Math.min(320, openAbove ? above : below),
+            );
+          list.style.maxHeight = maxHeight + "px";
+          list.style.top =
+            (openAbove
+              ? rect.top - gap - Math.min(height, maxHeight)
+              : rect.bottom + gap) + "px";
+          list.style.left = Math.min(
+            Math.max(rect.left, margin),
+            innerWidth - list.offsetWidth - margin,
+          ) + "px";
+          list.scrollTop = scrollTop;
+        }
+        function onPointerDown(event) {
+          if (!root.contains(event.target)) close();
+        }
+        function onScroll(event) {
+          if (event.target !== list) place();
+        }
+        function open() {
+          if (isOpen()) return;
+          sync();
+          list.showPopover();
+          button.setAttribute("aria-expanded", "true");
+          highlight(Math.max(select.selectedIndex, 0));
+          place();
+          document.addEventListener("pointerdown", onPointerDown, true);
+          addEventListener("resize", place);
+          addEventListener("scroll", onScroll, {
+            capture: true,
+            passive: true,
+          });
+        }
+        function close() {
+          if (isOpen()) list.hidePopover();
+          button.setAttribute("aria-expanded", "false");
+          button.removeAttribute("aria-activedescendant");
+          document.removeEventListener(
+            "pointerdown",
+            onPointerDown,
+            true,
+          );
+          removeEventListener("resize", place);
+          removeEventListener("scroll", onScroll, true);
+          typed = "";
+          clearTimeout(typedTimer);
+        }
+        function commit(index) {
+          const option = select.options[index];
+          if (option && option.value !== select.value) {
+            select.value = option.value;
+            select.dispatchEvent(
+              new Event("change", { bubbles: true }),
+            );
+          }
+          sync();
+          close();
+          button.focus();
+        }
+        function typeAhead(char) {
+          typed += char.toLowerCase();
+          clearTimeout(typedTimer);
+          typedTimer = setTimeout(() => typed = "", 500);
+          const labels = [...select.options].map((option) =>
+              option.label.toLowerCase()
+            ),
+            repeated = [...typed].every((letter) =>
+              letter === typed[0]
+            ),
+            search = repeated ? typed[0] : typed,
+            start = repeated ? activeIndex + 1 : activeIndex;
+          for (let step = 0; step < labels.length; step++) {
+            const index = (start + step + labels.length) %
+              labels.length;
+            if (labels[index].startsWith(search)) {
+              highlight(index);
+              return;
+            }
+          }
+        }
+        button.addEventListener("keydown", (event) => {
+          const { key } = event,
+            printable = key.length === 1 && !event.ctrlKey &&
+              !event.metaKey && !event.altKey;
+          if (!isOpen()) {
+            if (["ArrowDown", "ArrowUp", "Enter", " "].includes(key)) {
+              event.preventDefault();
+              open();
+            } else if (printable) {
+              event.preventDefault();
+              open();
+              typeAhead(key);
+            }
+            return;
+          }
+          if (key === "Tab") {
+            close();
+            return;
+          }
+          if (key === " " && typed) {
+            event.preventDefault();
+            typeAhead(key);
+            return;
+          }
+          const moves = {
+            ArrowDown: 1,
+            ArrowUp: -1,
+            PageDown: 10,
+            PageUp: -10,
+          };
+          if (key === "Escape") {
+            event.stopPropagation();
+            close();
+          } else if (
+            key === "Enter" || key === " " ||
+            (key === "ArrowUp" && event.altKey)
+          ) commit(activeIndex);
+          else if (key in moves) highlight(activeIndex + moves[key]);
+          else if (key === "Home") highlight(0);
+          else if (key === "End") highlight(select.options.length - 1);
+          else if (printable) typeAhead(key);
+          else return;
+          event.preventDefault();
+        });
+        button.addEventListener("keyup", (event) => {
+          if (event.key === " ") event.preventDefault();
+        });
+        button.addEventListener(
+          "click",
+          () => isOpen() ? close() : open(),
+        );
+        list.addEventListener(
+          "mousedown",
+          (event) => event.preventDefault(),
+        );
+        list.addEventListener("pointermove", (event) => {
+          const item = event.target.closest("[role=option]");
+          if (item && Number(item.dataset.index) !== activeIndex) {
+            highlight(Number(item.dataset.index));
+          }
+        });
+        list.addEventListener("click", (event) => {
+          const item = event.target.closest("[role=option]");
+          if (item) commit(Number(item.dataset.index));
+        });
+        root.addEventListener("focusout", (event) => {
+          if (!root.contains(event.relatedTarget)) close();
+        });
+        return { sync, close, isOpen };
+      }
+      const projectDropdown = createDropdown(
+        $("projectFilter"),
+        $("projectFilterButton"),
+        $("projectFilterList"),
+      );
       function refreshProjectControls() {
         const projects = projectsFromTasks(),
           current = $("projectFilter").value;
@@ -1768,6 +2114,7 @@
         $("projectOptions").innerHTML = projects.map((project) =>
           `<option value="${esc(project)}"></option>`
         ).join("");
+        projectDropdown.sync();
       }
       function render() {
         const workspaceState = captureWorkspaceState();
@@ -2540,6 +2887,7 @@
         }
       });
       function openDrawer(id = null, defaults = {}) {
+        projectDropdown.close();
         if (!draft) drawerReturnFocus = document.activeElement;
         isNew = !id;
         openId = id;

@@ -49,3 +49,21 @@ func TestEmbeddedBoardIncludesFocusViewsAndKindControls(t *testing.T) {
 		}
 	}
 }
+
+func TestEmbeddedBoardIncludesAccessibleProjectDropdown(t *testing.T) {
+	html := string(BoardHTML)
+	markers := []string{
+		`role="combobox"`,
+		`aria-haspopup="listbox"`,
+		`role="listbox"`,
+		`popover="manual"`,
+		`function createDropdown`,
+		`aria-activedescendant`,
+		`projectDropdown.sync()`,
+	}
+	for _, marker := range markers {
+		if !strings.Contains(html, marker) {
+			t.Errorf("embedded board is missing project dropdown marker %q", marker)
+		}
+	}
+}

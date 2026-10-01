@@ -112,8 +112,140 @@ def check_header_fit(browser, evidence, ids):
             finish(context, errors, label)
 
 
+DROPDOWN_GEOMETRY = """() => {
+  const box = (id) => {
+    const r = document.getElementById(id).getBoundingClientRect();
+    return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+  };
+  return {
+    button: box("projectFilterButton"),
+    list: box("projectFilterList"),
+    width: innerWidth,
+    height: innerHeight,
+  };
+}"""
+
+ACTIVE_OPTION = """() => {
+  const id = document.getElementById("projectFilterButton")
+    .getAttribute("aria-activedescendant");
+  return id ? document.getElementById(id).textContent : null;
+}"""
+
+
+def dropdown_parts(page):
+    return (
+        page.locator("#projectFilterButton"),
+        page.locator("#projectFilterList"),
+        page.locator("#projectFilter"),
+    )
+
+
+def expect_closed(button, listbox):
+    expect(button).to_have_attribute("aria-expanded", "false")
+    assert not listbox.evaluate("e => e.matches(':popover-open')")
+
+
+def check_project_dropdown(browser, evidence, ids):
+    prefix = ids["prefix"]
+    billing = f"{prefix}-Billing"
+    for width, scheme in [(1280, "light"), (1280, "dark"), (390, "light"), (390, "dark")]:
+        label = f"dropdown {width} {scheme}"
+        context, page, errors = open_page(browser, width, scheme)
+        button, listbox, select = dropdown_parts(page)
+        expect(select).to_be_hidden()
+        assert select.evaluate("e => e.tabIndex") == -1, label
+        page.locator("#search").focus()
+        page.keyboard.press("Tab")
+        assert page.evaluate("document.activeElement.id") == "projectFilterButton", label
+        padding, position = button.evaluate(
+            "e => { const s = getComputedStyle(e); return [parseFloat(s.paddingRight), s.backgroundPosition]; }"
+        )
+        assert padding >= 28, f"{label}: padding-right {padding}"
+        assert "16px" in position and "11px" in position, f"{label}: chevron at {position}"
+
+        page.keyboard.press("ArrowDown")
+        expect(button).to_have_attribute("aria-expanded", "true")
+        assert listbox.evaluate("e => e.matches(':popover-open')"), label
+        geo = page.evaluate(DROPDOWN_GEOMETRY)
+        assert geo["button"]["bottom"] <= geo["list"]["top"] <= geo["button"]["bottom"] + 6, (
+            f"{label}: list not under button {geo}"
+        )
+        assert geo["list"]["left"] >= 7.5, f"{label}: list left {geo}"
+        assert geo["list"]["right"] <= geo["width"] - 7.5, f"{label}: list right {geo}"
+        page.screenshot(
+            path=str(evidence / f"dropdown-open-{width}-{scheme}.png"),
+            animations="disabled",
+        )
+        first = button.get_attribute("aria-activedescendant")
+        page.keyboard.press("ArrowDown")
+        assert button.get_attribute("aria-activedescendant") != first, label
+        page.keyboard.press("End")
+        assert page.evaluate(ACTIVE_OPTION) == "Unassigned", label
+        page.keyboard.press("Home")
+        assert page.evaluate(ACTIVE_OPTION) == "All projects", label
+        page.keyboard.press(prefix[0].lower())
+        assert page.evaluate(ACTIVE_OPTION) == billing, page.evaluate(ACTIVE_OPTION)
+        page.keyboard.press("Enter")
+        expect_closed(button, listbox)
+        assert page.evaluate("document.activeElement.id") == "projectFilterButton", label
+        expect(button).to_have_text(billing)
+        shown = page.locator(".card[data-task-id]").evaluate_all(
+            "cards => cards.map(card => card.dataset.taskId)"
+        )
+        assert shown == [ids["billing"]], f"{label}: filtered cards {shown}"
+
+        page.keyboard.press("ArrowDown")
+        page.keyboard.press("ArrowDown")
+        page.keyboard.press("Escape")
+        expect_closed(button, listbox)
+        assert select.evaluate("e => e.value") == billing, label
+
+        page.keyboard.press("ArrowDown")
+        page.keyboard.press("Home")
+        page.keyboard.press("Tab")
+        expect_closed(button, listbox)
+        assert page.evaluate("document.activeElement.id") == "doneToggle", label
+        assert select.evaluate("e => e.value") == billing, label
+
+        button.click()
+        expect(button).to_have_attribute("aria-expanded", "true")
+        listbox.get_by_role("option", name="All projects", exact=True).click()
+        expect_closed(button, listbox)
+        assert select.evaluate("e => e.value") == "", label
+        expect(button).to_have_text("All projects")
+
+        button.click()
+        expect(button).to_have_attribute("aria-expanded", "true")
+        page.locator("#summary").click(position={"x": 4, "y": 4})
+        expect_closed(button, listbox)
+        assert select.evaluate("e => e.value") == "", label
+
+        button.click()
+        renamed = f"{prefix}-Renamed"
+        api("PATCH", "/api/tasks/" + ids["blocked"], {"project": renamed})
+        expect(listbox.get_by_role("option", name=renamed, exact=True)).to_be_visible(
+            timeout=2000
+        )
+        expect(button).to_have_attribute("aria-expanded", "true")
+        api("PATCH", "/api/tasks/" + ids["blocked"], {"project": ""})
+        expect(listbox.get_by_role("option", name=renamed, exact=True)).to_have_count(0)
+        page.keyboard.press("Escape")
+        expect_closed(button, listbox)
+        finish(context, errors, label)
+
+    context, page, errors = open_page(browser, 1280, "light", height=260)
+    button, listbox, _ = dropdown_parts(page)
+    button.click()
+    geo = page.evaluate(DROPDOWN_GEOMETRY)
+    assert geo["list"]["bottom"] <= geo["height"] - 7.5, f"short viewport: {geo}"
+    assert geo["list"]["top"] >= 7.5, f"short viewport: {geo}"
+    page.screenshot(path=str(evidence / "dropdown-open-short.png"), animations="disabled")
+    finish(context, errors, "dropdown short viewport")
+
+
 CHECKS = {
     "header_fit": check_header_fit,
+    "project_dropdown": check_project_dropdown,
 }
 
 
