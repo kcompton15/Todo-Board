@@ -50,7 +50,7 @@ def refuse_real_boards():
         sys.exit(2)
 
 
-def open_page(browser, width, scheme, height=None):
+def new_page(browser, width, scheme, height=None):
     mobile = width <= 390
     context = browser.new_context(
         viewport={"width": width, "height": height or (844 if mobile else 800)},
@@ -62,6 +62,11 @@ def open_page(browser, width, scheme, height=None):
     page = context.new_page()
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
+    return context, page, errors
+
+
+def open_page(browser, width, scheme, height=None):
+    context, page, errors = new_page(browser, width, scheme, height)
     page.goto(URL)
     page.wait_for_load_state("networkidle")
     return context, page, errors
@@ -580,12 +585,196 @@ def check_dialogs(browser, evidence, ids):
         finish(context, errors, label)
 
 
+NO_MATCH = (
+    "Nothing matches these filters. Either you're all caught up"
+    " or the filters are being picky."
+)
+NO_CARDS = "No cards yet. Type into any lane's add box, or press New task."
+
+
+def shot(page, evidence, name):
+    page.screenshot(path=str(evidence / f"{name}.png"), animations="disabled")
+
+
+def check_loading(browser, evidence, width, scheme):
+    label = f"loading {width} {scheme}"
+    context, page, errors = new_page(browser, width, scheme)
+    held = []
+    page.route("**/api/tasks", lambda route: held.append(route))
+    page.route("**/api/events", lambda route: route.abort())
+    page.goto(URL)
+    expect(page.locator(".board-state")).to_contain_text("Loading the board")
+    expect(page.locator(".lane")).to_have_count(0)
+    expect(page.locator("#summary")).to_be_empty()
+    shot(page, evidence, f"state-loading-{width}-{scheme}")
+    for _ in range(50):
+        if held:
+            break
+        page.wait_for_timeout(100)
+    assert held, f"{label}: /api/tasks never requested"
+    held[0].continue_()
+    expect(page.locator(".lane")).to_have_count(5)
+    expect(page.locator(".board-state")).to_have_count(0)
+    finish(context, errors, label)
+
+
+def check_load_error(browser, evidence, width, scheme):
+    label = f"error {width} {scheme}"
+    context, page, errors = new_page(browser, width, scheme)
+    page.route(
+        "**/api/tasks",
+        lambda route: route.fulfill(
+            status=500,
+            body='{"error":"store unavailable"}',
+            content_type="application/json",
+        ),
+    )
+    page.route("**/api/events", lambda route: route.abort())
+    page.goto(URL)
+    panel = page.locator(".board-state.error")
+    expect(panel).to_contain_text("The board isn't answering")
+    expect(panel).to_contain_text("store unavailable")
+    expect(panel).to_have_attribute("role", "alert")
+    retry = panel.get_by_role("button", name="Try again")
+    expect(retry).to_be_visible()
+    expect(page.locator(".lane")).to_have_count(0)
+    expect(page.locator("#banner")).not_to_have_class(re.compile(r"\bshow\b"))
+    shot(page, evidence, f"state-error-{width}-{scheme}")
+    page.unroute("**/api/tasks")
+    page.unroute("**/api/events")
+    retry.click()
+    expect(page.locator(".lane")).to_have_count(5)
+    expect(page.locator(".board-state")).to_have_count(0)
+    expect(page.locator("#statusText")).not_to_have_text("offline")
+    finish(context, errors, label)
+
+
+def check_offline(browser, evidence, width, scheme):
+    label = f"offline {width} {scheme}"
+    context, page, errors = new_page(browser, width, scheme)
+    page.route("**/api/**", lambda route: route.abort())
+    page.goto(URL)
+    expect(page.locator(".board-state.error")).to_contain_text("Try again")
+    expect(page.locator("#statusText")).to_have_text("offline")
+    expect(page.locator("#banner")).not_to_have_class(re.compile(r"\bshow\b"))
+    page.wait_for_timeout(3500)
+    expect(page.locator("#statusText")).to_have_text("offline")
+    shot(page, evidence, f"state-offline-{width}-{scheme}")
+    finish(context, errors, label)
+
+
+def check_no_cards(browser, evidence, width, scheme):
+    label = f"no cards {width} {scheme}"
+    context, page, errors = new_page(browser, width, scheme)
+    page.route(
+        "**/api/tasks",
+        lambda route: route.fulfill(
+            status=200, body='{"tasks":[]}', content_type="application/json"
+        ),
+    )
+    page.route("**/api/events", lambda route: route.abort())
+    page.goto(URL)
+    for view in ["#allView", "#projectView"]:
+        page.locator(view).click()
+        expect(page.locator(".filter-note")).to_have_text(NO_CARDS)
+        expect(page.locator(".lane-add input")).to_have_count(5)
+    shot(page, evidence, f"state-no-cards-{width}-{scheme}")
+    finish(context, errors, label)
+
+
+def check_empty_filters(browser, evidence, ids, width, scheme):
+    label = f"empty filter {width} {scheme}"
+    context, page, errors = open_page(browser, width, scheme)
+    note = page.locator(".filter-note")
+    page.locator("#search").fill("zzzz-nothing")
+    texts = []
+    for view in ["#allView", "#projectView"]:
+        page.locator(view).click()
+        expect(note).to_have_count(1)
+        expect(note.get_by_role("button", name="Clear search and project")).to_be_visible()
+        expect(note.get_by_role("button", name="Show everything")).to_be_visible()
+        texts.append(note.locator("span").inner_text())
+        if view == "#allView":
+            expect(page.locator(".lane")).to_have_count(5)
+            shot(page, evidence, f"state-empty-filter-{width}-{scheme}")
+        else:
+            expect(page.locator(".lane")).to_have_count(0)
+    assert texts == [NO_MATCH, NO_MATCH], f"{label}: note text {texts}"
+    note.get_by_role("button", name="Clear search and project").click()
+    expect(page.locator("#search")).to_have_value("")
+    expect(page.locator("#search")).to_be_focused()
+    expect(note).to_have_count(0)
+    expect(page.locator(".card[data-task-id]").first).to_be_visible()
+    page.locator("#allView").click()
+
+    if width == 1280:
+        long_project = f"{ids['prefix']}-Customer Success Operations and Renewals"
+        page.locator("#focusView").click()
+        button, listbox, _ = dropdown_parts(page)
+        button.click()
+        listbox.get_by_role("option", name=long_project, exact=True).click()
+        expect_closed(button, listbox)
+        expect(note).to_have_text(re.compile(re.escape(NO_MATCH)))
+        show = note.get_by_role("button", name="Show everything")
+        expect(show).to_be_visible()
+        show.click()
+        expect(page.locator("#everythingView")).to_have_attribute("aria-pressed", "true")
+        expect(page.locator("#everythingView")).to_be_focused()
+        expect(note).to_have_count(0)
+        card = page.locator(".card[data-task-id]")
+        expect(card).to_have_count(1)
+    finish(context, errors, label)
+
+
+def check_banner(browser, evidence, ids, width, scheme):
+    label = f"banner {width} {scheme}"
+    context, page, errors = open_page(browser, width, scheme)
+    banner = page.locator("#banner")
+    page.locator(f'[data-task-id="{ids["billing"]}"] [data-open]').click()
+    expect(page.locator("#fTitle")).to_be_focused()
+    page.locator("#newLink").fill("")
+    page.locator("#stageLink").click()
+    page.keyboard.press("Escape")
+    expect(page.locator("#drawer")).to_have_attribute("aria-hidden", "true")
+    expect(banner).to_have_class(re.compile(r"\bshow\b"))
+    expect(banner).to_have_class(re.compile(r"\berror\b"))
+    expect(page.locator("#bannerText")).to_have_text("Enter a Jira key or link first.")
+    colors = page.evaluate(
+        """() => {
+          const probe = document.createElement("span");
+          probe.style.cssText = "transition: none; color: var(--danger-soft)";
+          document.body.append(probe);
+          const soft = getComputedStyle(probe).color;
+          probe.remove();
+          return [getComputedStyle(document.getElementById("banner")).backgroundColor, soft];
+        }"""
+    )
+    assert colors[0] == colors[1], f"{label}: banner background {colors}"
+    page.locator(".topbar").evaluate("e => e.scrollIntoView()")
+    shot(page, evidence, f"state-banner-{width}-{scheme}")
+    page.locator("#dismissBanner").click()
+    expect(banner).to_be_hidden()
+    finish(context, errors, label)
+
+
+def check_states(browser, evidence, ids):
+    for scheme in SCHEMES:
+        check_loading(browser, evidence, 1280, scheme)
+        check_load_error(browser, evidence, 1280, scheme)
+        check_offline(browser, evidence, 1280, scheme)
+        check_no_cards(browser, evidence, 1280, scheme)
+        check_banner(browser, evidence, ids, 1280, scheme)
+        for width in [1280, 390]:
+            check_empty_filters(browser, evidence, ids, width, scheme)
+
+
 CHECKS = {
     "header_fit": check_header_fit,
     "project_dropdown": check_project_dropdown,
     "controls_style": check_controls_style,
     "drawer": check_drawer,
     "dialogs": check_dialogs,
+    "states": check_states,
 }
 
 

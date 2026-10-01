@@ -339,7 +339,24 @@
         background: var(--accent-soft);
       }
       .banner.show {
-        display: block;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .banner.error {
+        background-color: var(--danger-soft);
+        color: var(--ink);
+        border-bottom-color: color-mix(
+          in srgb,
+          var(--danger) 40%,
+          var(--line)
+        );
+      }
+      #bannerText {
+        flex: 1;
+      }
+      #dismissBanner {
+        margin: -6px -8px -6px 0;
       }
       .summary {
         display: flex;
@@ -408,6 +425,36 @@
       }
       .grouped .lane {
         max-height: 520px;
+      }
+      .grouped .empty {
+        padding: 8px 7px;
+      }
+      .board-state {
+        max-width: 460px;
+        margin: 48px auto;
+        padding: 22px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background-color: var(--surface);
+        text-align: center;
+      }
+      .board-state.error {
+        border-color: var(--danger);
+      }
+      .board-state p {
+        margin: 8px 0 16px;
+        color: var(--muted);
+      }
+      .filter-note {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 12px;
+        margin-bottom: 12px;
+        border: 1px dashed var(--line-strong);
+        border-radius: 10px;
+        color: var(--muted);
       }
       .lane.dragover {
         border-color: var(--accent);
@@ -1331,7 +1378,16 @@
         <button class="btn" id="doneToggle" type="button">Hide done</button>
       </div>
     </header>
-    <div class="banner" id="banner" role="status"></div>
+    <div class="banner" id="banner" role="status">
+      <span id="bannerText"></span><button
+        class="icon-btn"
+        type="button"
+        id="dismissBanner"
+        aria-label="Dismiss message"
+      >
+        ×
+      </button>
+    </div>
     <div class="summary" id="summary"></div>
     <main class="workspace" id="workspace"></main>
 
@@ -1626,6 +1682,8 @@
           ? savedFocus
           : "focus",
         hideDone = localStorage.getItem("board.hideDone") !== "0";
+      let loadState = "loading",
+        loadError = "";
       let openId = null,
         draft = null,
         isNew = false,
@@ -1734,6 +1792,7 @@
         if (data === lastSnapshot) return;
         lastSnapshot = data;
         tasks = normalizeTasks(JSON.parse(data).tasks);
+        loadState = "ready";
         render();
       }
       function queueTaskWrite(taskId, write) {
@@ -1986,12 +2045,13 @@
           $("drawerMessage").textContent = message;
           $("drawerMessage").hidden = !message;
         }
-        const banner = $("banner");
-        banner.textContent = message;
+        const banner = $("banner"), text = $("bannerText");
+        text.textContent = message;
         banner.classList.toggle("show", !!message);
+        banner.classList.toggle("error", !!message && sticky);
         if (message && !sticky) {
           setTimeout(() => {
-            if (banner.textContent === message) {
+            if (text.textContent === message) {
               banner.classList.remove("show");
             }
           }, 5000);
@@ -2347,6 +2407,17 @@
         $("doneToggle").textContent = hideDone
           ? "Show done"
           : "Hide done";
+        if (loadState !== "ready") {
+          $("summary").innerHTML = "";
+          $("workspace").innerHTML = loadState === "loading"
+            ? '<div class="board-state" role="status"><strong>Loading the board…</strong></div>'
+            : `<div class="board-state error" role="alert"><strong>The board isn't answering</strong><p>Couldn't load tasks from ${
+              esc(location.host)
+            }: ${
+              esc(loadError)
+            }. Check that the board server is running, then try again. It's probably not personal.</p><button class="btn" type="button" id="retryLoad">Try again</button></div>`;
+          return;
+        }
         const filtered = visibleTasks(),
           active = filtered.filter(isOpenWork).length,
           doing =
@@ -2357,7 +2428,7 @@
         $("summary").innerHTML =
           `<strong>${active} open</strong><span>${doing} in progress</span><span>${openSteps} open steps</span><span>${filtered.length} shown</span><span class="legend">Drag to move · ↑↓ to rank</span>`;
         if (view === "project") renderProjects(filtered);
-        else {$("workspace").innerHTML =
+        else {$("workspace").innerHTML = filterNoteHTML(filtered) +
             `<div class="board-scroll" data-scroll-key="all-horizontal"><div class="board">${
               lanesHTML(filtered, "")
             }</div></div>`;}
@@ -2374,6 +2445,26 @@
         );
         restoreWorkspaceState(workspaceState);
       }
+      function filterNoteHTML(filtered) {
+        if (!tasks.length) {
+          return `<div class="filter-note">No cards yet. Type into any lane's add box, or press New task.</div>`;
+        }
+        if (filtered.length) return "";
+        const buttons = [];
+        if ($("search").value.trim() || $("projectFilter").value) {
+          buttons.push(
+            '<button class="btn" type="button" data-filter-action="clear">Clear search and project</button>',
+          );
+        }
+        if (focus !== "everything") {
+          buttons.push(
+            '<button class="btn" type="button" data-filter-action="everything">Show everything</button>',
+          );
+        }
+        return `<div class="filter-note"><span>Nothing matches these filters. Either you're all caught up or the filters are being picky.</span>${
+          buttons.join("")
+        }</div>`;
+      }
       function renderProjects(filtered) {
         const names = [
           ...new Set(filtered.map((task) => task.project || "")),
@@ -2385,8 +2476,12 @@
           )
         );
         if (!names.length) {
-          $("workspace").innerHTML =
-            '<div class="empty">No work matches these filters.</div>';
+          $("workspace").innerHTML = filterNoteHTML(filtered) +
+            (tasks.length
+              ? ""
+              : `<div class="board-scroll" data-scroll-key="all-horizontal"><div class="board">${
+                lanesHTML([], "")
+              }</div></div>`);
           return;
         }
         $("workspace").innerHTML = '<div class="grouped">' +
@@ -2842,6 +2937,26 @@
       $("workspace").addEventListener("click", (event) => {
         if (event.target.closest(".external-link")) {
           event.stopPropagation();
+          return;
+        }
+        if (event.target.closest("#retryLoad")) {
+          loadBoard();
+          return;
+        }
+        const filterAction = event.target.closest(
+          "[data-filter-action]",
+        );
+        if (filterAction) {
+          if (filterAction.dataset.filterAction === "clear") {
+            $("search").value = "";
+            $("projectFilter").value = "";
+            projectDropdown.sync();
+            render();
+            $("search").focus();
+          } else {
+            $("everythingView").click();
+            $("everythingView").focus();
+          }
           return;
         }
         const toggle = event.target.closest("[data-toggle]");
@@ -3486,14 +3601,34 @@
       $("chimeBtn").setAttribute("aria-pressed", String(chimeOn));
       $("chimeBtn").classList.toggle("active", chimeOn);
       scheduleChime();
-      render();
-      api("/api/tasks").then((data) => {
-        tasks = normalizeTasks(data.tasks);
+      $("dismissBanner").addEventListener(
+        "click",
+        () => $("banner").classList.remove("show"),
+      );
+      async function loadBoard() {
+        const retrying = loadState === "error";
+        loadState = "loading";
         render();
-      }).catch((error) => {
-        status("offline", "off");
-        say(error.message, true);
-      });
+        try {
+          const data = await api("/api/tasks");
+          tasks = normalizeTasks(data.tasks);
+          loadState = "ready";
+          if (retrying) {
+            const open = events.readyState === EventSource.OPEN;
+            status(
+              open ? "live" : "reconnecting",
+              open ? "live" : "off",
+            );
+          }
+        } catch (error) {
+          if (loadState === "ready") return;
+          loadState = "error";
+          loadError = error.message;
+          status("offline", "off");
+        }
+        render();
+      }
+      loadBoard();
       const events = new EventSource("/api/events");
       events.addEventListener("tasks", (event) => {
         if (pendingWrites) queuedSnapshot = event.data;
@@ -3503,7 +3638,9 @@
         event.target.classList.remove("revealing");
       });
       events.onopen = () => status("live", "live");
-      events.onerror = () => status("reconnecting", "off");
+      events.onerror = () => {
+        if (loadState !== "error") status("reconnecting", "off");
+      };
     </script>
   </body>
 </html>
