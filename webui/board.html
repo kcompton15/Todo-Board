@@ -97,9 +97,9 @@
         top: 0;
         z-index: 30;
         display: flex;
-        align-items: center;
-        gap: 10px;
-        min-height: 62px;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
         padding: 10px 16px;
         background: color-mix(in srgb, var(--surface) 92%, transparent);
         border-bottom: 1px solid var(--line);
@@ -156,11 +156,18 @@
       .spacer {
         flex: 1;
       }
-      .controls {
+      .topbar-row, .toolbar {
         display: flex;
         align-items: center;
         gap: 7px;
+        flex-wrap: wrap;
         min-width: 0;
+      }
+      .actions {
+        display: flex;
+        gap: 7px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
       }
       .btn, .select, .search {
         min-height: 36px;
@@ -170,6 +177,7 @@
       }
       .btn {
         padding: 6px 11px;
+        white-space: nowrap;
         transition:
           background 0.14s ease,
           border-color 0.14s ease,
@@ -191,7 +199,7 @@
       .btn.danger {
         color: var(--danger);
       }
-      .btn.active {
+      .btn.active, .btn[aria-pressed="true"] {
         color: var(--accent);
         background: var(--accent-soft);
         border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
@@ -263,8 +271,8 @@
       .board {
         display: flex;
         align-items: flex-start;
-        gap: 12px;
-        min-width: 1288px;
+        gap: 10px;
+        min-width: 1220px;
       }
       .project-section {
         margin-bottom: 20px;
@@ -291,8 +299,7 @@
         font: 11px var(--mono);
       }
       .lane {
-        flex: 1 0 248px;
-        width: 308px;
+        flex: 1 0 236px;
         max-height: calc(100vh - 158px);
         display: flex;
         flex-direction: column;
@@ -836,20 +843,6 @@
         }
       }
       @media (max-width: 1040px) {
-        .topbar {
-          align-items: flex-start;
-          flex-wrap: wrap;
-        }
-        .controls {
-          flex: 1 0 100%;
-          width: 100%;
-          order: 4;
-          overflow-x: auto;
-          padding-bottom: 1px;
-        }
-        .topbar > .spacer {
-          display: none;
-        }
         .search {
           width: 190px;
         }
@@ -859,27 +852,25 @@
       }
       @media (max-width: 600px) {
         .topbar {
+          position: static;
           padding: 9px 10px;
-          align-items: center;
         }
         .brand span:last-child {
           display: none;
         }
-        .controls {
-          flex-wrap: wrap;
-          overflow: visible;
+        .actions {
+          flex: 1 0 100%;
+        }
+        .actions .btn {
+          flex: 1 0 auto;
         }
         .controls .segmented {
           flex: 0 0 auto;
         }
         .controls .search {
-          flex: 1 1 132px;
+          flex: 1 1 160px;
           width: auto;
           min-width: 0;
-        }
-        .controls .select {
-          flex: 1 1 150px;
-          max-width: none;
         }
         .controls > .btn {
           flex: 1 0 auto;
@@ -892,6 +883,9 @@
         }
         .workspace {
           padding: 10px;
+        }
+        .board {
+          min-width: 0;
         }
         .lane {
           flex: 0 0 88vw;
@@ -992,22 +986,54 @@
   </head>
   <body>
     <header class="topbar">
-      <div class="brand">
-        <span class="brandmark"></span><span>Todo Board</span>
+      <div class="topbar-row">
+        <div class="brand">
+          <span class="brandmark"></span><span>Todo Board</span>
+        </div>
+        <span class="clock" id="clock">--:--</span>
+        <span class="status"><span class="dot" id="dot"></span><span
+            id="statusText"
+          >connecting</span></span>
+        <span class="spacer"></span>
+        <div class="actions">
+          <button class="btn" id="activityButton" type="button">
+            Activity
+          </button>
+          <button class="btn" id="standupButton" type="button">
+            Generate standup
+          </button>
+          <button class="btn" id="weeklyButton" type="button">
+            Weekly report
+          </button>
+          <button
+            class="btn"
+            id="chimeBtn"
+            type="button"
+            aria-pressed="false"
+          >
+            Hourly chime
+          </button>
+          <button
+            class="btn"
+            id="themeBtn"
+            type="button"
+            aria-pressed="false"
+          >
+            Dark mode
+          </button>
+          <button class="btn primary" id="newTask" type="button">
+            New task
+          </button>
+        </div>
       </div>
-      <span class="clock" id="clock">--:--</span>
-      <span class="status"><span class="dot" id="dot"></span><span
-          id="statusText"
-        >connecting</span></span>
-      <span class="spacer"></span>
-      <div class="controls">
-        <div class="segmented" aria-label="Board view">
+      <div class="controls toolbar">
+        <div class="segmented" role="group" aria-label="Board view">
           <button class="btn active" id="allView" type="button">
             All work
           </button>
           <button class="btn" id="projectView" type="button">By project</button>
         </div>
-        <div class="segmented" aria-label="Task view">
+        <div class="segmented" role="group" aria-label="Task view">
           <button class="btn active" id="focusView" type="button">Focus</button>
           <button class="btn" id="reviewsView" type="button">Reviews</button>
           <button class="btn" id="everythingView" type="button">
@@ -1028,17 +1054,7 @@
         >
           <option value="">All projects</option>
         </select>
-        <button class="btn" id="activityButton" type="button">Activity</button>
-        <button class="btn" id="standupButton" type="button">
-          Generate standup
-        </button>
-        <button class="btn" id="weeklyButton" type="button">
-          Weekly report
-        </button>
         <button class="btn" id="doneToggle" type="button">Hide done</button>
-        <button class="btn" id="chimeBtn" type="button">Chime off</button>
-        <button class="btn" id="themeBtn" type="button">Theme</button>
-        <button class="btn primary" id="newTask" type="button">New task</button>
       </div>
     </header>
     <div class="banner" id="banner" role="status"></div>
@@ -1768,7 +1784,15 @@
         refreshProjectControls();
         checkDraftConflict();
         $("allView").classList.toggle("active", view === "all");
+        $("allView").setAttribute(
+          "aria-pressed",
+          String(view === "all"),
+        );
         $("projectView").classList.toggle("active", view === "project");
+        $("projectView").setAttribute(
+          "aria-pressed",
+          String(view === "project"),
+        );
         ["focus", "reviews", "everything"].forEach((mode) => {
           const control = $(`${mode}View`), active = focus === mode;
           control.classList.toggle("active", active);
@@ -2815,13 +2839,24 @@
       });
       $("search").addEventListener("input", render);
       $("projectFilter").addEventListener("change", render);
+      const darkQuery = matchMedia("(prefers-color-scheme: dark)");
+      function effectiveTheme() {
+        return document.documentElement.dataset.theme ||
+          (darkQuery.matches ? "dark" : "light");
+      }
+      function syncThemeButton() {
+        $("themeBtn").setAttribute(
+          "aria-pressed",
+          String(effectiveTheme() === "dark"),
+        );
+      }
       $("themeBtn").addEventListener("click", () => {
-        const next = document.documentElement.dataset.theme === "dark"
-          ? "light"
-          : "dark";
+        const next = effectiveTheme() === "dark" ? "light" : "dark";
         document.documentElement.dataset.theme = next;
         localStorage.setItem("board.theme", next);
+        syncThemeButton();
       });
+      darkQuery.addEventListener("change", syncThemeButton);
       function playChime() {
         try {
           const AudioContext = window.AudioContext ||
@@ -2879,7 +2914,7 @@
       $("chimeBtn").addEventListener("click", () => {
         chimeOn = !chimeOn;
         localStorage.setItem("board.chime", chimeOn ? "1" : "0");
-        $("chimeBtn").textContent = chimeOn ? "Chime on" : "Chime off";
+        $("chimeBtn").setAttribute("aria-pressed", String(chimeOn));
         $("chimeBtn").classList.toggle("active", chimeOn);
         if (chimeOn) {
           playChime();
@@ -2902,7 +2937,8 @@
       if (savedTheme) {
         document.documentElement.dataset.theme = savedTheme;
       }
-      $("chimeBtn").textContent = chimeOn ? "Chime on" : "Chime off";
+      syncThemeButton();
+      $("chimeBtn").setAttribute("aria-pressed", String(chimeOn));
       $("chimeBtn").classList.toggle("active", chimeOn);
       scheduleChime();
       render();

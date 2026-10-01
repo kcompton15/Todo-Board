@@ -88,6 +88,27 @@ def check_header_fit(browser, evidence, ids):
                 path=str(evidence / f"header-{width}-{scheme}.png"),
                 animations="disabled",
             )
+            if width == 1280:
+                lanes = page.locator(".board-scroll").evaluate(
+                    "e => [e.scrollWidth, e.clientWidth]"
+                )
+                assert lanes[0] <= lanes[1] + 1, f"{label}: lanes scroll {lanes}"
+            if width == 390:
+                position = page.locator(".topbar").evaluate(
+                    "e => getComputedStyle(e).position"
+                )
+                assert position == "static", f"{label}: header is {position}"
+            if scheme == "dark":
+                theme = page.locator("#themeBtn")
+                expect(theme).to_have_attribute("aria-pressed", "true")
+                before = page.evaluate("getComputedStyle(document.body).backgroundColor")
+                theme.click()
+                page.wait_for_function(
+                    "before => getComputedStyle(document.body).backgroundColor !== before",
+                    arg=before,
+                    timeout=2000,
+                )
+                expect(theme).to_have_attribute("aria-pressed", "false")
             finish(context, errors, label)
 
 
