@@ -14,7 +14,7 @@ cd Todo-Board
 scripts/team-setup
 ```
 
-HTTPS works too: `https://github.com/kcompton15/Todo-Board.git`. Run `scripts/team-setup --dry-run` first to see what it will change. Setup builds the container, links the `todo` CLI into `~/.local/bin`, installs the Claude Code plugin, and writes the Codex integration. When it finishes, open [http://127.0.0.1:7337](http://127.0.0.1:7337).
+HTTPS works too: `https://github.com/kcompton15/Todo-Board.git`. Setup builds the container, links the `todo` CLI into `~/.local/bin`, installs the Claude Code plugin, and writes the Codex integration. When it finishes, open [http://127.0.0.1:7337](http://127.0.0.1:7337).
 
 [docs/SETUP.md](docs/SETUP.md) covers what setup changes, updating, troubleshooting and uninstalling. A browser-friendly copy is in [docs/setup.html](docs/setup.html).
 

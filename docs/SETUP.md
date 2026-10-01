@@ -21,7 +21,7 @@ cd Todo-Board
 scripts/team-setup
 ```
 
-Clone it anywhere you like. The script finds its own location. Run it with `--dry-run` first if you want to see what it will change. It's safe to rerun at any time.
+Clone it anywhere you like. The script finds its own location. It's safe to rerun at any time.
 
 When it finishes:
 
