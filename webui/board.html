@@ -1695,9 +1695,10 @@
       }
       function activityValue(value) {
         const text = value || "∅";
-        return text.length > 140
+        const chars = Array.from(text);
+        return chars.length > 140
           ? `<span title="${esc(text)}">${
-            esc(text.slice(0, 140))
+            esc(chars.slice(0, 140).join(""))
           }…</span>`
           : `<span>${esc(text)}</span>`;
       }

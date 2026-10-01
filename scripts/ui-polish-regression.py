@@ -475,10 +475,13 @@ def check_drawer(browser, evidence, ids):
         kind, add = page.locator("#workLogKind"), page.locator("#addWorkLog")
         assert abs(middle(kind) - middle(add)) <= 4, f"{label}: work log controls split"
         assert page.locator("#workLogText").bounding_box()["y"] < kind.bounding_box()["y"], label
-        page.locator("#workLogText").fill(f"Vendor sandbox down ({scheme} {width})")
+        entry_text = f"Vendor sandbox down ({scheme} {width})"
+        page.locator("#workLogText").fill(entry_text)
         kind.select_option("blocker")
         add.click()
-        badge = page.locator('#workLog .log-kind[data-kind="blocker"]').first
+        entry = page.locator("#workLog li").filter(has=page.get_by_text(entry_text, exact=True))
+        expect(entry).to_have_count(1)
+        badge = entry.locator('.log-kind[data-kind="blocker"]')
         expect(badge).to_be_visible()
         expect(badge).to_have_text("blocker")
         expect(page.locator('#workLog .log-kind[data-kind="progress"]')).to_have_count(1)
