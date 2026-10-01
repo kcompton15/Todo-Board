@@ -124,7 +124,10 @@ make down
 uv run --with playwright python -m playwright install chromium
 uv run --with playwright python scripts/acceptance.py run /tmp/board-qa --restart
 uv run --with playwright python scripts/ui-regression.py
+TODO_URL=http://127.0.0.1:7348 uv run --with playwright python scripts/ui-polish-regression.py
 ```
+
+The polish regression refuses to run against ports 7337 and 7338; point it at a throwaway board started with its own TODO_DATA_DIR.
 
 The HTTP API is documented in [docs/API.md](docs/API.md). Contributor notes for agents are in [AGENTS.md](AGENTS.md).
 
