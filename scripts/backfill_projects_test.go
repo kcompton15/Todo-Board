@@ -12,6 +12,9 @@ import (
 )
 
 func TestBackfillProjects(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("backfill-projects requires python3")
+	}
 	dir := t.TempDir()
 	fixture := `{"version":2,"tasks":[
 {"id":"ta","title":"alpha","lane":"today","priority":2,"source":"test","project":"web-app","tag":"feature"},
@@ -30,7 +33,7 @@ func TestBackfillProjects(t *testing.T) {
 	defer server.Close()
 	run := func(wantError bool, url string, args ...string) string {
 		t.Helper()
-		cmd := exec.Command("bash", append([]string{"./backfill-projects.sh"}, args...)...)
+		cmd := exec.Command("python3", append([]string{"./backfill-projects.py"}, args...)...)
 		cmd.Env = append(os.Environ(), "TODO_URL="+url)
 		data, err := cmd.CombinedOutput()
 		if (err != nil) != wantError {

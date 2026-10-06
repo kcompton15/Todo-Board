@@ -59,19 +59,9 @@ func TestTitleRefsNeedConfiguredPrefixes(t *testing.T) {
 	}
 }
 
-func TestParseIssuePrefixes(t *testing.T) {
-	got, err := ParseIssuePrefixes(" ABC, XY2 ,,")
-	if err != nil || !reflect.DeepEqual(got, []string{"ABC", "XY2"}) {
-		t.Fatalf("ParseIssuePrefixes = %v, %v", got, err)
-	}
-	if got, err := ParseIssuePrefixes(""); err != nil || got != nil {
-		t.Fatalf("empty = %v, %v", got, err)
-	}
-	for _, bad := range []string{"abc", "A", "2AB", "AB-C", "AB|C"} {
-		if _, err := ParseIssuePrefixes(bad); err == nil {
-			t.Fatalf("ParseIssuePrefixes(%q) accepted", bad)
-		}
-		if err := SetIssuePrefixes([]string{bad}); err == nil {
+func TestSetIssuePrefixesRejectsInvalidKeys(t *testing.T) {
+	for _, bad := range []string{"abc", "A", "2AB", "AB-C", "AB|C", ""} {
+		if err := SetIssuePrefixes([]string{"ABC", bad}); err == nil {
 			t.Fatalf("SetIssuePrefixes(%q) accepted", bad)
 		}
 	}
@@ -278,7 +268,7 @@ func TestPickMatchPrefersDedicatedCardOverUmbrella(t *testing.T) {
 	s := newMatchStore(t)
 	seed, err := s.CreateMany([]TaskInput{
 		{Title: "ABC-871 report export", Lane: "doing"},
-		{Title: "Sprint 13: land ABC-931, then ABC-871", Lane: "doing"},
+		{Title: "Release 2.4: land ABC-931 and ABC-871", Lane: "doing"},
 	}, "test")
 	if err != nil {
 		t.Fatal(err)

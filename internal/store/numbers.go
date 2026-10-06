@@ -7,15 +7,14 @@ import (
 	"strings"
 )
 
-// assignMissingNumbers numbers legacy cards in (createdAt, id) order and legacy steps in
-// array order, after any number already in use, and returns the next free card number.
+// assignMissingNumbers numbers unnumbered cards in (createdAt, id) order and returns the next free number.
 func assignMissingNumbers(tasks map[string]Task, persistedNext int) (int, error) {
 	if persistedNext < 0 {
 		return 0, fmt.Errorf("nextNumber %d is negative", persistedNext)
 	}
 	used := make(map[int]string, len(tasks))
 	highest := 0
-	missing := make([]Task, 0)
+	var missing []Task
 	for id, task := range tasks {
 		if task.Number < 0 {
 			return 0, fmt.Errorf("task %s has negative number %d", id, task.Number)
@@ -122,8 +121,7 @@ func parsePositive(value string) (int, bool) {
 	return number, true
 }
 
-// Resolve finds a card by full ID or by N, #N, N.M or #N.M. A step reference also
-// returns the matching subtask.
+// Resolve finds a card by full ID or by N, #N, N.M or #N.M; a step reference also returns the step.
 func (s *Store) Resolve(ref string) (Task, *Subtask, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -153,8 +151,7 @@ func (s *Store) Resolve(ref string) (Task, *Subtask, error) {
 	return Task{}, nil, ErrNotFound
 }
 
-// FindSubtask matches a step by full ID, by its per-card number (M or #M), or by
-// N.M when N is this card's number.
+// FindSubtask matches a step by full ID, by M or #M, or by N.M when N is this card's number.
 func FindSubtask(task Task, ref string) (Subtask, bool) {
 	for _, sub := range task.Subtasks {
 		if sub.ID == ref {

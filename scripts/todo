@@ -365,8 +365,8 @@ case "$command_name" in
           else
             (.text + "\n" + $items[$i]) as $candidate |
             (($items | length) - $i - 1) as $after |
-            (if $after == 0 then $candidate else $candidate + "\n" + ($after | more) end) as $probe |
-            if (($probe | utf8bytelength) + 1) <= $limit then .text = $candidate
+            (if $after == 0 then $candidate else $candidate + "\n" + ($after | more) end) as $preview |
+            if (($preview | utf8bytelength) + 1) <= $limit then .text = $candidate
             else {text: (.text + "\n" + ((($items | length) - $i) | more)), stopped: true}
             end
           end

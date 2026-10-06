@@ -7,8 +7,7 @@ import (
 	"github.com/kcompton15/Todo-Board/internal/store"
 )
 
-// withRefs rewrites card and step numbers in the path to internal IDs before the
-// handler runs, so revision checks and history keep using IDs.
+// withRefs rewrites numbers in the path to internal IDs so revision checks and history keep using IDs.
 func (s *Server) withRefs(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ref := r.PathValue("id")

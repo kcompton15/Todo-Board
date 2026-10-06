@@ -793,8 +793,7 @@ func (s *Store) applyOperation(tasks map[string]Task, operation Operation, sourc
 	}
 }
 
-// makeSubtasks builds a replacement step list. Steps that keep an existing ID keep their
-// number; new steps take numbers after every number the card has used.
+// makeSubtasks keeps the number of each step that keeps its ID and numbers new steps after the highest used.
 func (s *Store) makeSubtasks(existing []Subtask, nextNumber int, inputs SubtaskInputs, parentLane string) ([]Subtask, int, error) {
 	counter := Task{Subtasks: existing, NextSubtaskNumber: nextNumber}
 	numbers := make(map[string]int, len(existing))

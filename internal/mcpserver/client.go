@@ -297,8 +297,7 @@ func (c *BoardClient) GetActivity(ctx context.Context, input GetTaskInput) (map[
 	return response, err
 }
 
-// boardRef accepts a full ID or a card or step number, dropping the optional # so the
-// value is safe in a URL path.
+// boardRef drops the optional # from a card or step number so it is safe in a URL path.
 func boardRef(field, value string) (string, error) {
 	trimmed := strings.TrimPrefix(value, "#")
 	card, step, hasStep := strings.Cut(trimmed, ".")

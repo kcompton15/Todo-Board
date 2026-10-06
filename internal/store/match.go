@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -24,41 +23,25 @@ func ValidOnMatch(policy string) bool {
 var issuePrefix = regexp.MustCompile(`^[A-Z][A-Z0-9]+$`)
 
 var (
-	titleKeyMu    sync.RWMutex
-	titleIssueKey *regexp.Regexp
+	titleKeyMu sync.RWMutex
+	titleKey   *regexp.Regexp
+	titleMRURL = regexp.MustCompile(`https://gitlab\.com/[A-Za-z0-9_][A-Za-z0-9_./-]*?/-/merge_requests/[1-9][0-9]*`)
+	titleMRRef = regexp.MustCompile(`[A-Za-z0-9_][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_][A-Za-z0-9_.-]*)+![1-9][0-9]*`)
 )
 
-// ParseIssuePrefixes reads a comma-separated list such as "PROJ,OPS".
-func ParseIssuePrefixes(value string) ([]string, error) {
-	var prefixes []string
-	for _, part := range strings.Split(value, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		if !issuePrefix.MatchString(part) {
-			return nil, fmt.Errorf("invalid issue prefix %q: use uppercase Jira project keys such as PROJ", part)
-		}
-		prefixes = append(prefixes, part)
-	}
-	return prefixes, nil
-}
-
-// SetIssuePrefixes sets the Jira projects whose keys are read from card titles; none disables it.
+// SetIssuePrefixes sets the Jira projects whose keys are read from card titles; none turns it off.
 func SetIssuePrefixes(prefixes []string) error {
 	var pattern *regexp.Regexp
 	if len(prefixes) > 0 {
-		quoted := make([]string, len(prefixes))
-		for i, prefix := range prefixes {
+		for _, prefix := range prefixes {
 			if !issuePrefix.MatchString(prefix) {
 				return fmt.Errorf("invalid issue prefix %q: use uppercase Jira project keys such as PROJ", prefix)
 			}
-			quoted[i] = regexp.QuoteMeta(prefix)
 		}
-		pattern = regexp.MustCompile(`\b(?:` + strings.Join(quoted, "|") + `)-[1-9][0-9]*\b`)
+		pattern = regexp.MustCompile(`\b(?:` + strings.Join(prefixes, "|") + `)-[1-9][0-9]*\b`)
 	}
 	titleKeyMu.Lock()
-	titleIssueKey = pattern
+	titleKey = pattern
 	titleKeyMu.Unlock()
 	return nil
 }
@@ -66,13 +49,8 @@ func SetIssuePrefixes(prefixes []string) error {
 func titleKeyPattern() *regexp.Regexp {
 	titleKeyMu.RLock()
 	defer titleKeyMu.RUnlock()
-	return titleIssueKey
+	return titleKey
 }
-
-var (
-	titleMRURL = regexp.MustCompile(`https://gitlab\.com/[A-Za-z0-9_][A-Za-z0-9_./-]*?/-/merge_requests/[1-9][0-9]*`)
-	titleMRRef = regexp.MustCompile(`[A-Za-z0-9_][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_][A-Za-z0-9_.-]*)+![1-9][0-9]*`)
-)
 
 type Match struct {
 	ID     string `json:"id"`
@@ -153,12 +131,15 @@ func adjacent(text string, span []int, before, after string) bool {
 	return false
 }
 
-func inputRefKey(link LinkInput) (refKey, bool) {
-	value := link.Ref
-	if value == "" {
-		value = link.URL
+func linkValue(link LinkInput) string {
+	if link.Ref != "" {
+		return link.Ref
 	}
-	kind, ref, _, err := CanonicalLink(value)
+	return link.URL
+}
+
+func inputRefKey(link LinkInput) (refKey, bool) {
+	kind, ref, _, err := CanonicalLink(linkValue(link))
 	if err != nil {
 		return refKey{}, false
 	}
@@ -210,7 +191,7 @@ func incomingRequired(input TaskInput) []refKey {
 	return keys
 }
 
-// Legacy cards carry their keys only in titles.
+// cardRefs reads the title too, since older cards carry their keys only there.
 func cardRefs(task Task) map[refKey]bool {
 	refs := map[refKey]bool{}
 	for _, link := range task.Links {
@@ -226,64 +207,74 @@ func cardRefs(task Task) map[refKey]bool {
 	return refs
 }
 
-func findMatches(tasks map[string]Task, keys []refKey) (open, done []Task, covered map[string]string) {
-	covered = map[string]string{}
+type candidate struct {
+	task Task
+	ref  string
+}
+
+func findMatches(tasks map[string]Task, keys []refKey) (open, done []candidate) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
 	for _, task := range tasks {
 		refs := cardRefs(task)
 		for _, key := range keys {
-			if refs[key] {
-				covered[task.ID] = key.ref
-				break
+			if !refs[key] {
+				continue
 			}
-		}
-		if _, ok := covered[task.ID]; !ok {
-			continue
-		}
-		if task.Lane == "done" {
-			done = append(done, task)
-		} else {
-			open = append(open, task)
+			if task.Lane == "done" {
+				done = append(done, candidate{task, key.ref})
+			} else {
+				open = append(open, candidate{task, key.ref})
+			}
+			break
 		}
 	}
-	byNumber := func(list []Task) {
-		sort.Slice(list, func(i, j int) bool {
-			if list[i].Number != list[j].Number {
-				return list[i].Number < list[j].Number
-			}
-			return list[i].ID < list[j].ID
-		})
-	}
-	byNumber(open)
-	byNumber(done)
-	return open, done, covered
+	sortByNumber(open)
+	sortByNumber(done)
+	return open, done
 }
 
-func pickMatch(candidates []Task, refs []string) (Task, bool) {
-	if len(candidates) == 0 {
-		return Task{}, false
+func sortByNumber(list []candidate) {
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].task.Number != list[j].task.Number {
+			return list[i].task.Number < list[j].task.Number
+		}
+		return list[i].task.ID < list[j].task.ID
+	})
+}
+
+type matchScore struct{ covered, own, number int }
+
+func (a matchScore) beats(b matchScore) bool {
+	if a.covered != b.covered {
+		return a.covered > b.covered
 	}
-	type score struct{ covered, own, number int }
-	scoreOf := func(task Task) score {
-		own := cardRefs(task)
+	if a.own != b.own {
+		return a.own < b.own
+	}
+	return a.number > b.number
+}
+
+// pickMatch prefers the card covering the most incoming refs, then the one with the fewest refs of its own.
+func pickMatch(open []candidate, keys []refKey) candidate {
+	scoreOf := func(match candidate) matchScore {
+		refs := cardRefs(match.task)
 		covered := 0
-		for key := range own {
-			if slices.Contains(refs, key.ref) {
+		for _, key := range keys {
+			if refs[key] {
 				covered++
 			}
 		}
-		return score{covered, len(own), task.Number}
+		return matchScore{covered, len(refs), match.task.Number}
 	}
-	// UpdatedAt is not used because the reconciler touches cards every minute.
-	best, bestScore := candidates[0], scoreOf(candidates[0])
-	for _, candidate := range candidates[1:] {
-		s := scoreOf(candidate)
-		if s.covered > bestScore.covered ||
-			(s.covered == bestScore.covered && s.own < bestScore.own) ||
-			(s.covered == bestScore.covered && s.own == bestScore.own && s.number > bestScore.number) {
-			best, bestScore = candidate, s
+	best, bestScore := open[0], scoreOf(open[0])
+	for _, match := range open[1:] {
+		if score := scoreOf(match); score.beats(bestScore) {
+			best, bestScore = match, score
 		}
 	}
-	return best, true
+	return best
 }
 
 func followOnNotes(number int, notes string) string {
@@ -312,34 +303,27 @@ func (s *Store) createOrAttach(tasks map[string]Task, history *[]HistoryRecord, 
 	}
 	input = withTitleRefs(input)
 	keys := incomingRequired(input)
-	if len(keys) > 0 {
-		open, done, covered := findMatches(tasks, keys)
-		if onMatch != OnMatchCreate {
-			refs := make([]string, len(keys))
-			for i, key := range keys {
-				refs[i] = key.ref
-			}
-			if match, ok := pickMatch(open, refs); ok {
-				if onMatch == OnMatchReject {
-					return CreateOutcome{}, &MatchError{Match{ID: match.ID, Number: match.Number, Title: match.Title, Ref: covered[match.ID]}}
-				}
-				return s.attach(tasks, history, match.ID, input, actor)
-			}
+	open, done := findMatches(tasks, keys)
+	if len(open) > 0 && onMatch != OnMatchCreate {
+		match := pickMatch(open, keys)
+		if onMatch == OnMatchReject {
+			return CreateOutcome{}, &MatchError{Match{ID: match.task.ID, Number: match.task.Number, Title: match.task.Title, Ref: match.ref}}
 		}
-		if len(done) > 0 {
-			input.Notes = followOnNotes(done[len(done)-1].Number, input.Notes)
-		}
+		return s.attach(tasks, history, match.task.ID, input, actor)
+	}
+	if len(done) > 0 {
+		input.Notes = followOnNotes(done[len(done)-1].task.Number, input.Notes)
 	}
 	task, err := s.createTask(tasks, input)
 	return CreateOutcome{Task: task}, err
 }
 
 func (s *Store) attach(tasks map[string]Task, history *[]HistoryRecord, id string, input TaskInput, actor string) (CreateOutcome, error) {
-	lane := input.Lane
 	normalized, err := normalizeInput(input, defaultTaskSource)
 	if err != nil {
 		return CreateOutcome{}, err
 	}
+	lane := input.Lane
 	if lane == "" {
 		lane = "today"
 	}
@@ -357,50 +341,59 @@ func (s *Store) attach(tasks map[string]Task, history *[]HistoryRecord, id strin
 	}
 	subtask := Subtask{ID: subtaskID, Number: takeSubtaskNumber(&task), Title: step.Title, Lane: step.Lane, Done: step.Done}
 	task.Subtasks = append(task.Subtasks, subtask)
-	if input.Links != nil {
-		has := map[refKey]bool{}
-		for _, link := range task.Links {
-			has[refKey{link.Kind, link.Ref}] = true
-		}
-		for _, link := range *input.Links {
-			key, ok := inputRefKey(link)
-			if !ok {
-				return CreateOutcome{}, fmt.Errorf("invalid Jira/MR reference %q", link.Ref+link.URL)
-			}
-			if has[key] {
-				continue
-			}
-			has[key] = true
-			role := link.Role
-			if role == "" {
-				role = "required"
-			}
-			if _, err := s.upsertLink(&task, LinkInput{Ref: key.ref, Role: role}); err != nil {
-				return CreateOutcome{}, err
-			}
-		}
+	if err := s.addMissingLinks(&task, input.Links); err != nil {
+		return CreateOutcome{}, err
 	}
 	task.UpdatedAt = s.now()
 	tasks[id] = task
-	text := "attached from " + normalized.Source + ": " + normalized.Title
-	if normalized.Notes != "" {
-		text += "\n\n" + normalized.Notes
-	}
-	if len(normalized.Subtasks) > 0 {
-		titles := make([]string, len(normalized.Subtasks))
-		for i, sub := range normalized.Subtasks {
-			titles[i] = sub.Title
-		}
-		text += "\n\nSteps: " + strings.Join(titles, "; ")
-	}
 	updated, _, err := s.appendWorkLog(tasks, *history, WorkLogInput{
-		TaskID: id, SubtaskID: subtask.ID, Kind: WorkLogProgress, Text: truncateRunes(text, MaxWorkLogText),
+		TaskID: id, SubtaskID: subtask.ID, Kind: WorkLogProgress, Text: attachNote(normalized),
 	}, Mutation{Actor: actor, TaskID: id})
 	if err != nil {
 		return CreateOutcome{}, err
 	}
 	*history = updated
 	return CreateOutcome{Task: task, Attached: true, Subtask: &subtask}, nil
+}
+
+func (s *Store) addMissingLinks(task *Task, links *[]LinkInput) error {
+	if links == nil {
+		return nil
+	}
+	has := map[refKey]bool{}
+	for _, link := range task.Links {
+		has[refKey{link.Kind, link.Ref}] = true
+	}
+	for _, link := range *links {
+		key, ok := inputRefKey(link)
+		if !ok {
+			return fmt.Errorf("invalid Jira/MR reference %q", linkValue(link))
+		}
+		if has[key] {
+			continue
+		}
+		has[key] = true
+		if _, err := s.upsertLink(task, LinkInput{Ref: key.ref, Role: link.Role}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// attachNote keeps everything the caller sent, since only the title becomes the step.
+func attachNote(input TaskInput) string {
+	text := "attached from " + input.Source + ": " + input.Title
+	if input.Notes != "" {
+		text += "\n\n" + input.Notes
+	}
+	if len(input.Subtasks) > 0 {
+		titles := make([]string, len(input.Subtasks))
+		for i, sub := range input.Subtasks {
+			titles[i] = sub.Title
+		}
+		text += "\n\nSteps: " + strings.Join(titles, "; ")
+	}
+	return truncateRunes(text, MaxWorkLogText)
 }
 
 func (s *Store) CreateOrAttach(inputs []TaskInput, sourceOverride, onMatch string, options ...Mutation) ([]CreateOutcome, error) {
@@ -438,6 +431,7 @@ func (s *Store) CreateOrAttach(inputs []TaskInput, sourceOverride, onMatch strin
 				if sub.ID == outcomes[i].Subtask.ID {
 					found := sub
 					outcomes[i].Subtask = &found
+					break
 				}
 			}
 		}

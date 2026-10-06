@@ -1,12 +1,6 @@
 package store
 
-import (
-	"regexp"
-	"strconv"
-	"strings"
-)
-
-var numberToken = regexp.MustCompile(`^#?([0-9]{1,9})(?:\.[0-9]{1,9})?$`)
+import "strings"
 
 func searchTokens(query string) []string {
 	var tokens []string
@@ -50,11 +44,9 @@ func searchScore(task Task, tokens []string) int {
 	}
 	score := 0
 	for _, token := range tokens {
-		if match := numberToken.FindStringSubmatch(token); match != nil && task.Number > 0 {
-			if number, err := strconv.Atoi(match[1]); err == nil && number == task.Number {
-				score += 3
-				continue
-			}
+		if card, _, ok := parseNumberRef(token); ok && card == task.Number {
+			score += 3
+			continue
 		}
 		if strings.Contains(title, token) {
 			if wordStart(title, token) {

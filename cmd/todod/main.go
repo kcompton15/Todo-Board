@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -44,11 +45,8 @@ func main() {
 		logger.Error("invalid TODO_JIRA_SITE", "error", err)
 		os.Exit(1)
 	}
-	prefixes, err := store.ParseIssuePrefixes(os.Getenv("TODO_ISSUE_PREFIXES"))
-	if err == nil {
-		err = store.SetIssuePrefixes(prefixes)
-	}
-	if err != nil {
+	prefixes := strings.FieldsFunc(os.Getenv("TODO_ISSUE_PREFIXES"), func(r rune) bool { return r == ',' || r == ' ' })
+	if err := store.SetIssuePrefixes(prefixes); err != nil {
 		logger.Error("invalid TODO_ISSUE_PREFIXES", "error", err)
 		os.Exit(1)
 	}

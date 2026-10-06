@@ -23,7 +23,7 @@ func foldKey(value string) string {
 	return b.String()
 }
 
-// canonicalSpelling returns the most-used spelling among other cards that shares value's fold key.
+// canonicalSpelling returns the most-used spelling on other cards with the same fold key as value.
 func canonicalSpelling(tasks map[string]Task, selfID, value string, field func(Task) string) string {
 	key := foldKey(value)
 	if key == "" {
@@ -55,14 +55,11 @@ func preferSpelling(a, b string) bool {
 	return a < b
 }
 
-func taskProject(task Task) string { return task.Project }
-func taskTag(task Task) string     { return task.Tag }
-
 func foldNames(tasks map[string]Task, selfID string, project, tag *string) {
 	if project != nil {
-		*project = canonicalSpelling(tasks, selfID, *project, taskProject)
+		*project = canonicalSpelling(tasks, selfID, *project, func(task Task) string { return task.Project })
 	}
 	if tag != nil {
-		*tag = canonicalSpelling(tasks, selfID, *tag, taskTag)
+		*tag = canonicalSpelling(tasks, selfID, *tag, func(task Task) string { return task.Tag })
 	}
 }

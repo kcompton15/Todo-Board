@@ -14,7 +14,6 @@ build:
 validate: test
 	bash -n scripts/todo
 	bash -n scripts/board-context.sh
-	bash -n scripts/backfill-projects.sh
 	bash -n scripts/board-notifier
 	bash -n scripts/install-board-notifier
 	bash -n scripts/install-board-reconciler
