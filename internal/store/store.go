@@ -181,6 +181,7 @@ func (s *Store) Replace(id string, input TaskInput, options ...Mutation) (Task, 
 		if err != nil {
 			return err
 		}
+		foldNames(tasks, id, &normalized.Project, &normalized.Tag)
 		order := current.Order
 		if normalized.Order != nil {
 			order = *normalized.Order
@@ -552,6 +553,7 @@ func (s *Store) createTask(tasks map[string]Task, input TaskInput) (Task, error)
 	if err != nil {
 		return Task{}, err
 	}
+	foldNames(tasks, "", &normalized.Project, &normalized.Tag)
 	id, err := s.newTaskID()
 	if err != nil {
 		return Task{}, err
@@ -614,6 +616,14 @@ func (s *Store) applyPatch(tasks map[string]Task, current Task, patch TaskPatch)
 	if err != nil {
 		return Task{}, err
 	}
+	var project, tag *string
+	if patch.Project != nil {
+		project = &normalized.Project
+	}
+	if patch.Tag != nil {
+		tag = &normalized.Tag
+	}
+	foldNames(tasks, current.ID, project, tag)
 	updated := cloneTask(current)
 	updated.Revision = current.Revision + 1
 	updated.Title = normalized.Title
@@ -865,7 +875,8 @@ func nextOrder(tasks map[string]Task, lane, excludingID string) float64 {
 }
 
 func filterAndSort(tasks map[string]Task, filter Filter) []Task {
-	query := strings.ToLower(strings.TrimSpace(filter.Query))
+	tokens := searchTokens(filter.Query)
+	scores := map[string]int{}
 	result := make([]Task, 0, len(tasks))
 	for _, task := range tasks {
 		if filter.Lane != "" && task.Lane != filter.Lane {
@@ -883,16 +894,20 @@ func filterAndSort(tasks map[string]Task, filter Filter) []Task {
 		if filter.Priority != 0 && task.Priority != filter.Priority {
 			continue
 		}
-		if query != "" && !strings.Contains(strings.ToLower(task.Title), query) &&
-			!strings.Contains(strings.ToLower(task.Notes), query) &&
-			!strings.Contains(strings.ToLower(task.Project), query) &&
-			!subtasksContain(task.Subtasks, query) {
-			continue
+		if len(tokens) > 0 {
+			score := searchScore(task, tokens)
+			if score == 0 {
+				continue
+			}
+			scores[task.ID] = score
 		}
 		result = append(result, cloneTask(task))
 	}
 	sort.SliceStable(result, func(i, j int) bool {
 		left, right := result[i], result[j]
+		if scores[left.ID] != scores[right.ID] {
+			return scores[left.ID] > scores[right.ID]
+		}
 		if LaneIndex(left.Lane) != LaneIndex(right.Lane) {
 			return LaneIndex(left.Lane) < LaneIndex(right.Lane)
 		}
@@ -905,15 +920,6 @@ func filterAndSort(tasks map[string]Task, filter Filter) []Task {
 		return left.ID < right.ID
 	})
 	return result
-}
-
-func subtasksContain(subtasks []Subtask, query string) bool {
-	for _, subtask := range subtasks {
-		if strings.Contains(strings.ToLower(subtask.Title), query) {
-			return true
-		}
-	}
-	return false
 }
 
 func cloneMap(tasks map[string]Task) map[string]Task {

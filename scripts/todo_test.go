@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/kcompton15/Todo-Board/internal/httpapi"
@@ -185,7 +186,7 @@ func TestCLIContextIsQuietAndByteBounded(t *testing.T) {
 	tasks[0].Lane = "today"
 	tasks[0].Kind = "followup"
 	tasks[0].Project = "Internal Tools"
-	tasks[1].Title = "PROBE-SHOULD-NOT-APPEAR"
+	tasks[1].Title = "PROBE-ONLY-IN-ALSO"
 	tasks[1].Kind = "probe"
 	tasks[2].Title = "Review multilingual résumé 界"
 	tasks[2].Lane = "blocked"
@@ -207,7 +208,7 @@ func TestCLIContextIsQuietAndByteBounded(t *testing.T) {
 	if size := len([]byte(got)); size > 1900 {
 		t.Fatalf("context output is %d bytes; want at most 1900\n%s", size, got)
 	}
-	for _, forbidden := range []string{"[x]", "COMPLETED step", "PROBE-SHOULD-NOT-APPEAR", "[work]"} {
+	for _, forbidden := range []string{"[x]", "COMPLETED step", "[probe]", "[work]"} {
 		if strings.Contains(got, forbidden) {
 			t.Fatalf("context output contains %q:\n%s", forbidden, got)
 		}
@@ -216,15 +217,16 @@ func TestCLIContextIsQuietAndByteBounded(t *testing.T) {
 		"- [today] [followup] tcontext00  Follow-up owner  {Internal Tools}",
 		"- [blocked] [review] tcontext02  Review multilingual résumé 界",
 		"- [doing] tcontext03  Default work card",
-		"    - +1 more open steps",
+		"    - +2 more open steps",
+		"Also open (backlog/probe):\n- tcontext01 PROBE-ONLY-IN-ALSO",
 		"more active cards (todo ls)",
 	} {
 		if !strings.Contains(got, required) {
 			t.Fatalf("context output does not contain %q:\n%s", required, got)
 		}
 	}
-	if strings.Contains(got, "s0005") {
-		t.Fatalf("context output included a sixth open step:\n%s", got)
+	if strings.Contains(got, "s0003") || strings.Contains(got, "s0203") {
+		t.Fatalf("context output included a fourth open step:\n%s", got)
 	}
 }
 
@@ -435,5 +437,87 @@ func TestCLIAddAttachesToOpenCard(t *testing.T) {
 	}
 	if got := run("import", batch); got != "created 1 task(s), attached 1 to existing cards" {
 		t.Fatalf("import: %s", got)
+	}
+}
+
+func TestCLIContextListsBacklogAndProbeCards(t *testing.T) {
+	base := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	var tasks []store.Task
+	for i := 0; i < 20; i++ {
+		tasks = append(tasks, store.Task{
+			ID: fmt.Sprintf("tactive%02d", i), Number: i + 1, Title: fmt.Sprintf("Active card %02d %s", i, strings.Repeat("x", 120)),
+			Lane: "doing", Kind: "work", Priority: 2, Source: "test", UpdatedAt: base,
+		})
+	}
+	for i := 0; i < 40; i++ {
+		tasks = append(tasks, store.Task{
+			ID: fmt.Sprintf("tbacklog%02d", i), Number: 100 + i, Title: fmt.Sprintf("Backlog idea %02d", i), Project: "API",
+			Lane: "backlog", Kind: "work", Priority: 2, Source: "test", UpdatedAt: base.Add(time.Duration(i) * time.Hour),
+		})
+	}
+	tasks = append(tasks,
+		store.Task{ID: "tprobe", Number: 200, Title: "Open probe", Lane: "today", Kind: "probe", Priority: 2, Source: "test", UpdatedAt: base.Add(48 * time.Hour)},
+		store.Task{ID: "tdoneprobe", Number: 201, Title: "Finished probe", Lane: "done", Kind: "probe", Priority: 2, Source: "test", UpdatedAt: base.Add(72 * time.Hour)},
+		store.Task{ID: "tbusy", Number: 202, Title: "Backlog with active step", Lane: "backlog", Kind: "work", Priority: 2, Source: "test", UpdatedAt: base.Add(96 * time.Hour),
+			Subtasks: []store.Subtask{{ID: "sbusy", Number: 1, Title: "busy step", Lane: "doing"}}},
+	)
+	got := runCLIContext(t, tasks)
+	if size := len([]byte(got)); size > 1900 {
+		t.Fatalf("context output is %d bytes; want at most 1900\n%s", size, got)
+	}
+	header := "## Task board: update these instead of creating duplicates\n"
+	if !strings.HasPrefix(got, header) || !strings.Contains(got, "more active cards (todo ls)") {
+		t.Fatalf("active section changed:\n%s", got)
+	}
+	_, also, ok := strings.Cut(got, "Also open (backlog/probe):\n")
+	if !ok {
+		t.Fatalf("no backlog/probe section:\n%s", got)
+	}
+	lines := strings.Split(strings.TrimSpace(also), "\n")
+	if len(lines) < 4 || lines[0] != "- #200 Open probe" || lines[1] != "- #139 Backlog idea 39 {API}" || lines[2] != "- #138 Backlog idea 38 {API}" {
+		t.Fatalf("backlog/probe order:\n%s", also)
+	}
+	if !strings.HasPrefix(lines[len(lines)-1], "- +") || !strings.Contains(lines[len(lines)-1], "more backlog/probe cards") {
+		t.Fatalf("no +K more tail:\n%s", also)
+	}
+	if strings.Contains(also, "Finished probe") || strings.Contains(also, "Backlog with active step") {
+		t.Fatalf("done probe or active backlog card in section:\n%s", also)
+	}
+	if !strings.Contains(got, "#202  Backlog with active step") && !strings.Contains(got, "more active cards") {
+		t.Fatalf("active backlog card lost:\n%s", got)
+	}
+}
+
+func TestCLIFindShowsTopTen(t *testing.T) {
+	for _, tool := range []string{"bash", "curl", "jq"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("CLI integration requires %s", tool)
+		}
+	}
+	s, err := store.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputs := []store.TaskInput{{Title: "lint gate for web-api", Lane: "done"}}
+	for i := 0; i < 12; i++ {
+		inputs = append(inputs, store.TaskInput{Title: fmt.Sprintf("lint card %02d", i), Lane: "today"})
+	}
+	if _, err := s.CreateMany(inputs, ""); err != nil {
+		t.Fatal(err)
+	}
+	api := httptest.NewServer(httpapi.New(s, httpapi.NewHub(), nil, nil).Handler())
+	defer api.Close()
+	cmd := exec.Command("bash", "./todo", "find", "lint gate")
+	cmd.Env = append(os.Environ(), "TODO_URL="+api.URL)
+	data, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("todo find: %v\n%s", err, data)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 12 || !strings.Contains(lines[1], "#1 ") || !strings.Contains(lines[1], "lint gate for web-api") {
+		t.Fatalf("find output:\n%s", data)
+	}
+	if lines[11] != `+3 more matches (todo find "lint gate" --json)` {
+		t.Fatalf("find tail = %q", lines[11])
 	}
 }

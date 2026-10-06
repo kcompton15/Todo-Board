@@ -2116,9 +2116,30 @@
       function isOpenWork(task) {
         return task.lane !== "done" || hasOpenSteps(task);
       }
+      function matchesSearch(task, tokens) {
+        const fields = [
+          task.title,
+          task.notes,
+          task.project,
+          task.tag,
+          ...task.subtasks.map((subtask) => subtask.title),
+          ...(task.links || []).flatMap((link) => [link.ref, link.url]),
+        ].map((value) => String(value || "").toLowerCase());
+        return tokens.some((token) => {
+          const number = token.match(/^#?(\d{1,9})(?:\.\d{1,9})?$/);
+          return (number && task.number > 0 &&
+            task.number === Number(number[1])) ||
+            fields.some((field) => field.includes(token));
+        });
+      }
       function visibleTasks() {
-        const query = $("search").value.trim().toLowerCase(),
-          numberQuery = query.match(/^#?(\d+)(?:\.\d+)?$/),
+        const tokens = [
+            ...new Set(
+              $("search").value.toLowerCase().split(/\s+/).filter(
+                Boolean,
+              ),
+            ),
+          ],
           project = $("projectFilter").value;
         return tasks.filter((task) => {
           const kind = task.kind || "work",
@@ -2136,17 +2157,7 @@
               (project === "__unassigned__"
                 ? !task.project
                 : task.project === project)) &&
-            (!query ||
-              (numberQuery && task.number === Number(numberQuery[1])) ||
-              [
-                task.title,
-                task.notes,
-                task.project,
-                task.tag,
-                ...task.subtasks.map((subtask) => subtask.title),
-              ].some((value) =>
-                String(value || "").toLowerCase().includes(query)
-              ));
+            (!tokens.length || matchesSearch(task, tokens));
         });
       }
       function createDropdown(select, button, list) {

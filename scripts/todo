@@ -99,7 +99,7 @@ usage() {
   cat <<'EOF'
 todo health
 todo ls [--lane L] [--project P] [--tag T] [--kind K] [--json]
-todo find "text" [--json]
+todo find "words" [--json]   (any word matches; best first, top 10)
 todo add "title" [--lane L] [--kind work|followup|review|probe]
          [--prio 1|2|3] [--project P] [--tag T]
          [--source S] [--notes TEXT] [--sub TEXT]...
@@ -168,7 +168,10 @@ case "$command_name" in
     result=$(api GET "/api/tasks?q=$(encode "$text")")
     count=$(printf '%s' "$result" | jq '.tasks|length')
     [[ "$count" -gt 0 ]] || { printf 'No matching tasks.\n' >&2; exit 1; }
-    if $json; then printf '%s\n' "$result" | jq .; else printf '%s\n' "$result" | print_table; fi
+    if $json; then printf '%s\n' "$result" | jq .; else
+      printf '%s\n' "$result" | jq '{tasks: .tasks[0:10]}' | print_table
+      [[ "$count" -le 10 ]] || printf '+%d more matches (todo find "%s" --json)\n' "$((count - 10))" "$text"
+    fi
     ;;
   add)
     [[ $# -ge 1 ]] || die "add requires a title"
@@ -328,11 +331,12 @@ case "$command_name" in
     api POST "/api/tasks/$id/work-log" "$body" application/json "$(printf '%s' "$current" | jq -r .revision)" | jq -r --arg ref "$(printf '%s' "$current" | jq -r "$JQ_REFS card_ref")" '"logged \(.kind) on \($ref)"'
     ;;
   context)
-    api GET /api/tasks | jq -r --argjson budget 1900 "$JQ_REFS"'
+    api GET /api/tasks | jq -r --argjson budget 1900 --argjson reserve 500 "$JQ_REFS"'
       def is_active:
         ((.lane != "done" and .lane != "backlog")
           or (.lane == "done" and any(.subtasks[]?; .lane != "done"))
           or any(.subtasks[]?; .lane != "done" and .lane != "backlog"));
+      def is_probe: (.kind // "work") == "probe";
       def card_block:
         . as $task |
         [.subtasks[]? | select(.lane != "done")] as $open |
@@ -342,41 +346,44 @@ case "$command_name" in
           + (if ($task.project // "") != "" then "  {\($task.project)}" else "" end))
         + (if ($open | length) == 0 then ""
           else "\n" + (
-            ([$open[0:5][] | "    - [ ] [\(.lane)] \(step_ref($task.number))  \(.title)"])
-            + (if ($open | length) > 5
-              then ["    - +\(($open | length) - 5) more open steps"]
+            ([$open[0:3][] | "    - [ ] [\(.lane)] \(step_ref($task.number))  \(.title)"])
+            + (if ($open | length) > 3
+              then ["    - +\(($open | length) - 3) more open steps"]
               else []
               end)
             | join("\n")
           )
           end);
-      [.tasks[] | select(is_active) | select((.kind // "work") != "probe") | card_block] as $blocks |
-      if ($blocks | length) == 0 then
-        "## Task board: no active cards."
-      else
-        "## Task board: update these instead of creating duplicates" as $header |
-        reduce range(0; $blocks | length) as $i (
-          {text: $header, stopped: false};
+      def also_line:
+        "- \(card_ref) "
+          + (if (.title | length) > 64 then .title[0:61] + "..." else .title end)
+          + (if (.project // "") != "" then " {\(.project)}" else "" end);
+      def fill($limit; $items; more):
+        reduce range(0; $items | length) as $i (
+          {text: ., stopped: false};
           if .stopped then .
           else
-            (.text + "\n" + $blocks[$i]) as $candidate |
-            (($blocks | length) - $i - 1) as $remaining_after |
-            if $remaining_after == 0 then
-              if (($candidate | utf8bytelength) + 1) <= $budget then
-                {text: $candidate, stopped: false}
-              else
-                {text: (.text + "\n- +\(($blocks | length) - $i) more active cards (todo ls)"), stopped: true}
-              end
-            else
-              ("- +\($remaining_after) more active cards (todo ls)") as $summary |
-              if ((($candidate + "\n" + $summary) | utf8bytelength) + 1) <= $budget then
-                {text: $candidate, stopped: false}
-              else
-                {text: (.text + "\n- +\(($blocks | length) - $i) more active cards (todo ls)"), stopped: true}
-              end
+            (.text + "\n" + $items[$i]) as $candidate |
+            (($items | length) - $i - 1) as $after |
+            (if $after == 0 then $candidate else $candidate + "\n" + ($after | more) end) as $probe |
+            if (($probe | utf8bytelength) + 1) <= $limit then .text = $candidate
+            else {text: (.text + "\n" + ((($items | length) - $i) | more)), stopped: true}
             end
           end
-        ) | .text
+        ) | .text;
+      [.tasks[] | select(is_active) | select(is_probe | not) | card_block] as $blocks |
+      [.tasks[] | select(.lane != "done") | select(is_probe or (.lane == "backlog" and (is_active | not)))]
+        | sort_by(.updatedAt) | reverse | map(also_line) as $also |
+      "Also open (backlog/probe):" as $also_header |
+      (if ($also | length) == 0 then 0
+        else ([(($also_header + "\n" + ($also | join("\n"))) | utf8bytelength) + 1, $reserve] | min)
+        end) as $held |
+      (if ($blocks | length) == 0 then "## Task board: no active cards."
+        else "## Task board: update these instead of creating duplicates"
+          | fill($budget - $held; $blocks; "- +\(.) more active cards (todo ls)")
+        end) as $active |
+      if ($also | length) == 0 or ((($active + "\n" + $also_header) | utf8bytelength) + 1) > $budget then $active
+      else ($active + "\n" + $also_header) | fill($budget; $also; "- +\(.) more backlog/probe cards (todo ls --lane backlog, todo ls --kind probe)")
       end'
     ;;
   help|-h|--help|"") usage ;;
