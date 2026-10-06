@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -261,10 +262,25 @@ func pickMatch(candidates []Task, refs []string) (Task, bool) {
 	if len(candidates) == 0 {
 		return Task{}, false
 	}
-	best := candidates[0]
+	type score struct{ covered, own, number int }
+	scoreOf := func(task Task) score {
+		own := cardRefs(task)
+		covered := 0
+		for key := range own {
+			if slices.Contains(refs, key.ref) {
+				covered++
+			}
+		}
+		return score{covered, len(own), task.Number}
+	}
+	// UpdatedAt is not used because the reconciler touches cards every minute.
+	best, bestScore := candidates[0], scoreOf(candidates[0])
 	for _, candidate := range candidates[1:] {
-		if candidate.UpdatedAt.After(best.UpdatedAt) || (candidate.UpdatedAt.Equal(best.UpdatedAt) && candidate.ID > best.ID) {
-			best = candidate
+		s := scoreOf(candidate)
+		if s.covered > bestScore.covered ||
+			(s.covered == bestScore.covered && s.own < bestScore.own) ||
+			(s.covered == bestScore.covered && s.own == bestScore.own && s.number > bestScore.number) {
+			best, bestScore = candidate, s
 		}
 	}
 	return best, true

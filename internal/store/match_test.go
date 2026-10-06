@@ -273,3 +273,22 @@ func TestOpsCreateDefaultsToAttach(t *testing.T) {
 		t.Fatal("onMatch on patch accepted")
 	}
 }
+
+func TestPickMatchPrefersDedicatedCardOverUmbrella(t *testing.T) {
+	s := newMatchStore(t)
+	seed, err := s.CreateMany([]TaskInput{
+		{Title: "ABC-871 report export", Lane: "doing"},
+		{Title: "Sprint 13: land ABC-931, then ABC-871", Lane: "doing"},
+	}, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dedicated := seed[0]
+	out, err := s.CreateOrAttach([]TaskInput{{Title: "Fix ABC-871 QA failures"}}, "", OnMatchAttach, Mutation{Actor: "cli"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out[0].Attached || out[0].Task.ID != dedicated.ID {
+		t.Fatalf("attached to %q; want dedicated card", out[0].Task.Title)
+	}
+}
