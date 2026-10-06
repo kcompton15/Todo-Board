@@ -36,9 +36,42 @@ The integrations tell agents to run `todo find` before creating anything, so the
 - `followup` when the conversation produces something the human must do. Agents never move these.
 - `probe` only when a question required real investigation and left something worth finding again.
 
-They keep one open card per Jira key or merge request. Re-review rounds, fix-ups and follow-up passes become steps on that card, because `todo add --link KEY` attaches to it automatically; `--new` is only for a genuinely separate outcome. Cards and steps are referred to as `#N` and `#N.M`.
+They keep one open card per Jira key or merge request, so a second review round or a fix-up becomes a step on the existing card rather than a new card. The board backs this up with [card numbers and automatic attach](#card-numbers-attach-and-search).
 
 Agents close their own reviews and probes when they hand back the result. They close `work` only when you asked for it and it is verified. Otherwise they leave it open and record a `next_step` saying it is ready to close. These updates are authorized side effects of the assignment, so agents do not ask separately before creating or closing a card. A session-start hook loads your active cards, plus a short list of open backlog and probe cards, into each new Claude Code or Codex session. If the board is down, agents mention it once and keep working. Details are in [docs/AGENT-INTEGRATION.md](docs/AGENT-INTEGRATION.md).
+
+## Card numbers, attach and search
+
+Four features keep the board readable when several agents write to it at once.
+
+**Numbers.** Every card gets a board-wide number (`#142`) and every step a number within its card (`#142.3`). Numbers are never reused, and the CLI, HTTP API, MCP tools and web UI accept them anywhere they accept an ID. Internal IDs remain the primary key.
+
+**Attach instead of duplicate.** When new work names a Jira key or merge request that an open card already covers, it becomes a step on that card. If only Done cards cover it, a new card is created with `Follow-on to #N.` in its notes. `--new` creates a separate card anyway. The CLI, MCP server and inbox attach by default. The HTTP API and web UI ask first: the API returns `409` naming the card, and the UI offers *Open*, *Create anyway* or *Dismiss*.
+
+**Folded names.** Project and tag spellings that differ only by case, spaces, `_` or `-` are stored as the spelling most cards already use, so `web app`, `Web_App` and `Web App` stay one project. `scripts/backfill-projects.py` previews fixes for spellings already on the board, `--apply` writes them, and near-duplicate names are reported but left alone.
+
+**Ranked search.** `todo find`, `?q=` and the UI search match a card when any word appears in its title, notes, project, tag, step titles or link refs, or equals its number. Results put exact numbers and title hits first.
+
+A short session on a board with `TODO_ISSUE_PREFIXES=PROJ`:
+
+```console
+$ todo add "Ship PROJ-41 CSV export" --project "Web App" --sub "Write the exporter"
+created #12 [backlog] Ship PROJ-41 CSV export
+$ todo add "Address review comments on the export" --link PROJ-41
+attached to #12 (Ship PROJ-41 CSV export) as #12.2
+$ todo add "Benchmark exports over 1M rows" --link PROJ-41 --new
+created #13 [backlog] Benchmark exports over 1M rows
+$ todo add "Polish the export dialog" --project web_app
+created #14 [backlog] Polish the export dialog
+$ todo check 12 2
+updated #12.2  Address review comments on the export
+$ todo find "csv dialog"
+#       LANE      P   KIND      PROJECT             TITLE
+#12     backlog   2   work      Web App             Ship PROJ-41 CSV export
+#14     backlog   2   work      Web App             Polish the export dialog
+```
+
+The title of #12 carries `PROJ-41`, so the second `add` attaches to it. `web_app` is stored as `Web App`, and `find` returns both cards because any word can match.
 
 ## Command line
 
@@ -60,11 +93,7 @@ todo log 142 progress "API change merged"
 todo done 142
 ```
 
-Cards are numbered `#142` and their steps `#142.3`. A card argument takes `142`, `'#142'` (quote it, or the shell treats `#` as a comment) or an unambiguous ID prefix. A step argument takes its number (`3`), `'#142.3'` or an ID prefix. `todo ls`, `show`, `add`, `sub` and `context` print numbers; `show` and `--json` keep the full IDs.
-
-`todo add` attaches instead of duplicating. When an open card already covers a Jira key or merge request passed with `--link`, or a merge request in the title, or a title key whose project is listed in `TODO_ISSUE_PREFIXES`, the new item becomes a step on that card and the CLI prints `attached to #142 (<title>) as #142.4`. When only Done cards cover it, a new card is created with `Follow-on to #N.` in its notes. `--new` always creates a separate card.
-
-`todo find "words"` matches a card when any word appears in its title, notes, project, tag, step titles or link refs, or equals its number, and prints the best 10 matches first. Project and tag spellings that differ only by case, spaces, `_` or `-` are folded to the spelling most cards already use. `bash scripts/backfill-projects.sh` previews fixes for spellings already on the board, `--apply` writes them, and near-duplicate names are reported but left alone.
+A card argument takes `142`, `'#142'` (quote it, or the shell treats `#` as a comment) or an unambiguous ID prefix. A step argument takes its number (`3`), `'#142.3'` or an ID prefix. `todo show` and `--json` keep the full IDs. A Jira key or merge request counts for attach when it is passed with `--link`, appears in the title as a merge request, or appears in the title as a key from a project in [`TODO_ISSUE_PREFIXES`](#jira-keys-in-card-titles). `todo find` prints the best 10 matches and how many more matched.
 
 Run `todo help` for every command. When the board is unreachable, the CLI exits with code 3 and one short message so agent sessions can carry on.
 
@@ -86,7 +115,7 @@ EOF
 | `TODO_PORT` | `docker compose` | `7337` | Host port. The bind address stays `127.0.0.1`. |
 | `TODO_URL` | `todo`, notifier, reconciler, MCP server | `http://127.0.0.1:7337` | Where clients find the board. Set it if you change the port. |
 | `TODO_JIRA_SITE` | `docker compose`, server | unset | Bare hostname such as `yourcompany.atlassian.net`. Enables Jira links. |
-| `TODO_ISSUE_PREFIXES` | `docker compose`, server | unset | Comma-separated Jira project keys such as `PROJ,OPS`. Keys with these prefixes in a new card's title become required links. |
+| `TODO_ISSUE_PREFIXES` | `docker compose`, server | unset | Comma-separated Jira project keys such as `PROJ,OPS`. See [Jira keys in card titles](#jira-keys-in-card-titles). |
 | `TODO_ACTOR` | `todo` | `cli` | Label recorded as the author of each change. |
 | `TODO_CONTAINER_NAME` | `docker compose` | `todo-board` | Container name. |
 
@@ -96,7 +125,13 @@ Without `TODO_JIRA_SITE`, Jira links are rejected. GitLab merge request links on
 TODO_JIRA_SITE=yourcompany.atlassian.net docker compose up -d
 ```
 
-`TODO_ISSUE_PREFIXES` only affects card titles. Without it the server reads no Jira keys from titles, so text like `UTF-8` never becomes a link; merge request URLs and `group/project!N` refs in titles are still read, and `--link` accepts any key. Each prefix must match `^[A-Z][A-Z0-9]+$`, the same rule as the reconciler's `issuePrefixes`, and title keys also need `TODO_JIRA_SITE`. Unlike the Jira site, you can change it at any time:
+### Jira keys in card titles
+
+`TODO_ISSUE_PREFIXES` lists the Jira projects whose keys the server should read from card titles, for example `PROJ,OPS`. A new card titled `Ship PROJ-41 CSV export` then gets a required link to `PROJ-41`, the same as if it had been created with `--link PROJ-41`. That link lets later work on `PROJ-41` attach to the card, and lets the reconciler close it when the issue is Done.
+
+Without the setting, the server reads no Jira keys from titles, so strings such as `UTF-8` or `ISO-8601` never turn into links. Merge request URLs and `group/project!N` refs in titles are always read, and `--link` accepts any key. Each prefix is an uppercase project key matching `^[A-Z][A-Z0-9]+$`, the same rule as the reconciler's `issuePrefixes`, and title keys also need `TODO_JIRA_SITE`. The server refuses to start with an invalid prefix.
+
+Prefixes apply when cards are created and matched, and links already stored never change, so you can add or change the setting at any time:
 
 ```bash
 TODO_JIRA_SITE=yourcompany.atlassian.net TODO_ISSUE_PREFIXES=PROJ,OPS docker compose up -d
