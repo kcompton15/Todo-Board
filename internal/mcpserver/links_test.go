@@ -14,6 +14,9 @@ func TestMain(m *testing.M) {
 	if err := store.SetJiraSite("example.atlassian.net"); err != nil {
 		panic(err)
 	}
+	if err := store.SetIssuePrefixes([]string{"ABC", "XYZ"}); err != nil {
+		panic(err)
+	}
 	os.Exit(m.Run())
 }
 

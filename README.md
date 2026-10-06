@@ -77,6 +77,7 @@ EOF
 | `TODO_PORT` | `docker compose` | `7337` | Host port. The bind address stays `127.0.0.1`. |
 | `TODO_URL` | `todo`, notifier, reconciler, MCP server | `http://127.0.0.1:7337` | Where clients find the board. Set it if you change the port. |
 | `TODO_JIRA_SITE` | `docker compose`, server | unset | Bare hostname such as `yourcompany.atlassian.net`. Enables Jira links. |
+| `TODO_ISSUE_PREFIXES` | `docker compose`, server | unset | Comma-separated Jira project keys such as `PROJ,OPS`. Keys with these prefixes in a new card's title become required links. |
 | `TODO_ACTOR` | `todo` | `cli` | Label recorded as the author of each change. |
 | `TODO_CONTAINER_NAME` | `docker compose` | `todo-board` | Container name. |
 
@@ -84,6 +85,12 @@ Without `TODO_JIRA_SITE`, Jira links are rejected. GitLab merge request links on
 
 ```bash
 TODO_JIRA_SITE=yourcompany.atlassian.net docker compose up -d
+```
+
+`TODO_ISSUE_PREFIXES` only affects card titles. Without it the server reads no Jira keys from titles, so text like `UTF-8` never becomes a link; merge request URLs and `group/project!N` refs in titles are still read, and `--link` accepts any key. Each prefix must match `^[A-Z][A-Z0-9]+$`, the same rule as the reconciler's `issuePrefixes`, and title keys also need `TODO_JIRA_SITE`. Unlike the Jira site, you can change it at any time:
+
+```bash
+TODO_JIRA_SITE=yourcompany.atlassian.net TODO_ISSUE_PREFIXES=PROJ,OPS docker compose up -d
 ```
 
 ## Optional components

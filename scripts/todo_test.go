@@ -372,3 +372,68 @@ func TestCLIResolvesAndPrintsNumbers(t *testing.T) {
 		t.Fatalf("ls --json lost IDs or numbers: %#v", listed.Tasks)
 	}
 }
+
+func TestCLIAddAttachesToOpenCard(t *testing.T) {
+	for _, tool := range []string{"bash", "curl", "jq"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("CLI integration requires %s", tool)
+		}
+	}
+	if err := store.SetJiraSite("example.atlassian.net"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetIssuePrefixes([]string{"ABC", "XYZ"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.SetIssuePrefixes(nil); err != nil {
+			t.Error(err)
+		}
+		if err := store.SetJiraSite(""); err != nil {
+			t.Error(err)
+		}
+	})
+	s, err := store.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateMany([]store.TaskInput{{Title: "Review ABC-942 plan", Lane: "done"}}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	api := httptest.NewServer(httpapi.New(s, httpapi.NewHub(), nil, nil).Handler())
+	defer api.Close()
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("bash", append([]string{"./todo"}, args...)...)
+		cmd.Env = append(os.Environ(), "TODO_URL="+api.URL, "TODO_ACTOR=codex")
+		data, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("todo %v: %v\n%s", args, err, data)
+		}
+		return strings.TrimSpace(string(data))
+	}
+	if got := run("add", "Re-review ABC-942 plan", "--link", "ABC-942"); got != "created #2 [backlog] Re-review ABC-942 plan" {
+		t.Fatalf("first add: %s", got)
+	}
+	followOn, _, err := s.Resolve("2")
+	if err != nil || !strings.HasPrefix(followOn.Notes, "Follow-on to #1.") {
+		t.Fatalf("follow-on notes = %q %v", followOn.Notes, err)
+	}
+	if got := run("add", "Re-review ABC-942 plan", "--link", "ABC-942"); got != "attached to #2 (Re-review ABC-942 plan) as #2.1" {
+		t.Fatalf("second add: %s", got)
+	}
+	if got := run("add", "Third pass on ABC-942", "--new"); got != "created #3 [backlog] Third pass on ABC-942" {
+		t.Fatalf("--new add: %s", got)
+	}
+	_, step, err := s.Resolve("2.1")
+	if err != nil || step == nil || step.Lane != "today" {
+		t.Fatalf("attached step = %#v %v", step, err)
+	}
+	batch := filepath.Join(t.TempDir(), "batch.json")
+	if err := os.WriteFile(batch, []byte(`[{"title":"XYZ-1 imported"},{"title":"XYZ-1 again"}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := run("import", batch); got != "created 1 task(s), attached 1 to existing cards" {
+		t.Fatalf("import: %s", got)
+	}
+}

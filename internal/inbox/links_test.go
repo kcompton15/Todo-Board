@@ -13,6 +13,9 @@ func TestMain(m *testing.M) {
 	if err := store.SetJiraSite("example.atlassian.net"); err != nil {
 		panic(err)
 	}
+	if err := store.SetIssuePrefixes([]string{"ABC", "XYZ"}); err != nil {
+		panic(err)
+	}
 	os.Exit(m.Run())
 }
 
@@ -44,5 +47,27 @@ func TestInboxLinkAndReceiptAtomicity(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("missing receipt")
+	}
+}
+
+func TestInboxArraysAttachToOpenCards(t *testing.T) {
+	dir := t.TempDir()
+	s, err := store.New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, err := s.CreateMany([]store.TaskInput{{Title: "XYZ-180 rollout", Lane: "doing"}}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := New(filepath.Join(dir, "inbox"), time.Second, s, nil, nil)
+	writeAtomic(t, w.directory, "attach.json", `[{"title":"XYZ-180 follow-up"},{"title":"Separate outcome"}]`)
+	w.scan()
+	got, err := s.Get(seed[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Subtasks) != 1 || got.Subtasks[0].Title != "XYZ-180 follow-up" || len(s.List(store.Filter{})) != 2 {
+		t.Fatalf("inbox attach = %#v", got)
 	}
 }

@@ -44,6 +44,14 @@ func main() {
 		logger.Error("invalid TODO_JIRA_SITE", "error", err)
 		os.Exit(1)
 	}
+	prefixes, err := store.ParseIssuePrefixes(os.Getenv("TODO_ISSUE_PREFIXES"))
+	if err == nil {
+		err = store.SetIssuePrefixes(prefixes)
+	}
+	if err != nil {
+		logger.Error("invalid TODO_ISSUE_PREFIXES", "error", err)
+		os.Exit(1)
+	}
 
 	taskStore, err := store.New(dataDir)
 	if err != nil {

@@ -220,6 +220,7 @@ type Operation struct {
 	ReconcileMode    *string       `json:"reconcileMode,omitempty"`
 	ExpectedRevision *uint64       `json:"expectedRevision,omitempty"`
 	Op               string        `json:"op"`
+	OnMatch          string        `json:"onMatch,omitempty"`
 	ID               string        `json:"id"`
 	WorkLog          *WorkLogInput `json:"workLog,omitempty"`
 	SubtaskID        string        `json:"subtaskId"`

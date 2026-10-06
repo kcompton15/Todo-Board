@@ -225,8 +225,21 @@ func (s *Server) dispatchTool(ctx context.Context, name string, arguments json.R
 		if input.Priority < 0 || input.Priority > 3 {
 			return nil, errors.New("priority must be 1, 2, or 3")
 		}
-		task, err := s.board.CreateTask(ctx, input)
-		return map[string]any{"task": task}, err
+		if input.OnMatch == "" {
+			input.OnMatch = store.OnMatchAttach
+		}
+		if !store.ValidOnMatch(input.OnMatch) {
+			return nil, fmt.Errorf("invalid onMatch %q", input.OnMatch)
+		}
+		result, err := s.board.CreateTask(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		if result.Attached {
+			message := fmt.Sprintf("attached to #%d (%s) as #%d.%d", result.Task.Number, result.Task.Title, result.Task.Number, result.Subtask.Number)
+			return map[string]any{"attached": true, "task": result.Task, "subtask": result.Subtask, "message": message}, nil
+		}
+		return map[string]any{"task": result.Task}, nil
 
 	case "update_task":
 		var input struct {
@@ -422,6 +435,7 @@ func toolDefinitions() []toolDefinition {
 					"type": "array", "description": "Concrete steps within this outcome",
 					"items": map[string]any{"type": "string"}, "maxItems": store.MaxSubtasks,
 				},
+				"onMatch": enumProperty("When an open card already covers a Jira key or MR in the title or required links: attach (default) adds this as a step there, reject returns the match, create makes a separate card", []string{store.OnMatchAttach, store.OnMatchReject, store.OnMatchCreate}),
 			}, []string{"title"}),
 			Annotations: annotations(false, false, false),
 		},

@@ -17,7 +17,7 @@ def main():
     baseline = {t["id"]: t for t in api("GET", "/api/tasks")["tasks"]}
     ids = []
     try:
-        task = api("POST", "/api/tasks", {
+        task = api("POST", "/api/tasks?onMatch=create", {
             "title": prefix, "project": prefix, "lane": "today", "kind": "review",
             "agentContext": "Not rendered in ordinary UI", "subtasks": ["API review"],
             "links": [{"ref": "PROJ-931"}, {"ref": "team/api!175", "state": "opened"}],

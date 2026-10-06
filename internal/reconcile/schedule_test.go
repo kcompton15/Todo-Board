@@ -340,7 +340,7 @@ func TestTickRequiredAbsentIdentityIsKnownGap(t *testing.T) {
 }
 
 func TestTickReferenceOnlyGapIsSilent(t *testing.T) {
-	h := newHarness(t, []store.TaskInput{{Title: "Backlog refinement PROJ-936", Kind: "work"}, linked("visible", map[string]string{"PROJ-1": "required"})})
+	h := newHarness(t, []store.TaskInput{linked("Backlog refinement PROJ-936", map[string]string{"PROJ-936": "reference"}), linked("visible", map[string]string{"PROJ-1": "required"})})
 	result := h.tick(t, "2026-10-06T09:20:30-05:00")
 	if !result.Healthy || len(h.notifier.notes) != 0 {
 		t.Fatalf("reference gap was loud: %+v %v", result, h.notifier.notes)

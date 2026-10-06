@@ -59,6 +59,13 @@ type CreateTaskInput struct {
 	Notes         string             `json:"notes,omitempty"`
 	Subtasks      []string           `json:"subtasks,omitempty"`
 	Source        string             `json:"source,omitempty"`
+	OnMatch       string             `json:"onMatch,omitempty"`
+}
+
+type CreateResult struct {
+	Task     Task     `json:"task"`
+	Attached bool     `json:"attached"`
+	Subtask  *Subtask `json:"subtask,omitempty"`
 }
 
 // UpdateTaskInput identifies a task and contains only fields Claude may edit.
@@ -190,19 +197,33 @@ func (c *BoardClient) GetTask(ctx context.Context, input GetTaskInput) (Task, er
 	return task, err
 }
 
-// CreateTask creates a card whose provenance is always claude-chat.
-func (c *BoardClient) CreateTask(ctx context.Context, input CreateTaskInput) (Task, error) {
+// CreateTask sends OnMatch as the query parameter; provenance is always claude-chat.
+func (c *BoardClient) CreateTask(ctx context.Context, input CreateTaskInput) (CreateResult, error) {
 	input.Source = claudeChatSource
-	var response struct {
-		Tasks []Task `json:"tasks"`
+	var query url.Values
+	if input.OnMatch != "" {
+		query = url.Values{"onMatch": {input.OnMatch}}
+		input.OnMatch = ""
 	}
-	if err := c.do(ctx, http.MethodPost, "/api/tasks", nil, input, &response); err != nil {
-		return Task{}, err
+	var response struct {
+		Tasks    []Task   `json:"tasks"`
+		Attached bool     `json:"attached"`
+		Task     *Task    `json:"task"`
+		Subtask  *Subtask `json:"subtask"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/api/tasks", query, input, &response); err != nil {
+		return CreateResult{}, err
+	}
+	if response.Attached {
+		if response.Task == nil || response.Subtask == nil {
+			return CreateResult{}, errors.New("board reported an attach without the card and step")
+		}
+		return CreateResult{Task: *response.Task, Attached: true, Subtask: response.Subtask}, nil
 	}
 	if len(response.Tasks) != 1 {
-		return Task{}, fmt.Errorf("board returned %d created tasks; want 1", len(response.Tasks))
+		return CreateResult{}, fmt.Errorf("board returned %d created tasks; want 1", len(response.Tasks))
 	}
-	return response.Tasks[0], nil
+	return CreateResult{Task: response.Tasks[0]}, nil
 }
 
 // UpdateTask changes editable fields on an existing task.

@@ -137,13 +137,47 @@ func (s *Server) createTasks(w http.ResponseWriter, r *http.Request) {
 		}
 		inputs = []store.TaskInput{input}
 	}
-	tasks, err := s.store.CreateMany(inputs, "", mutation(r))
+	onMatch := r.URL.Query().Get("onMatch")
+	if onMatch == "" {
+		onMatch = store.OnMatchReject
+	}
+	if !store.ValidOnMatch(onMatch) {
+		writeError(w, http.StatusBadRequest, "onMatch must be attach, reject, or create")
+		return
+	}
+	outcomes, err := s.store.CreateOrAttach(inputs, "", onMatch, mutation(r))
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
 	s.broadcast()
-	writeJSON(w, http.StatusCreated, map[string]any{"tasks": tasks})
+	if len(outcomes) == 1 && outcomes[0].Attached {
+		writeJSON(w, http.StatusOK, map[string]any{"attached": true, "task": outcomes[0].Task, "subtask": outcomes[0].Subtask})
+		return
+	}
+	created, attachments := splitOutcomes(outcomes)
+	response := map[string]any{"tasks": created}
+	if len(attachments) > 0 {
+		response["attachments"] = attachments
+	}
+	status := http.StatusCreated
+	if len(created) == 0 {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, response)
+}
+
+func splitOutcomes(outcomes []store.CreateOutcome) ([]store.Task, []map[string]any) {
+	created := make([]store.Task, 0, len(outcomes))
+	attachments := make([]map[string]any, 0)
+	for _, outcome := range outcomes {
+		if outcome.Attached {
+			attachments = append(attachments, map[string]any{"task": outcome.Task, "subtask": outcome.Subtask})
+			continue
+		}
+		created = append(created, outcome.Task)
+	}
+	return created, attachments
 }
 
 func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
@@ -307,13 +341,14 @@ func (s *Server) importTasks(w http.ResponseWriter, r *http.Request) {
 	if source == "" {
 		source = "cli"
 	}
-	tasks, err := s.store.CreateMany(inputs, source, mutation(r, source))
+	outcomes, err := s.store.CreateOrAttach(inputs, source, store.OnMatchAttach, mutation(r, source))
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
 	s.broadcast()
-	writeJSON(w, http.StatusCreated, map[string]any{"created": len(tasks), "tasks": tasks})
+	created, attachments := splitOutcomes(outcomes)
+	writeJSON(w, http.StatusCreated, map[string]any{"created": len(created), "tasks": created, "attachments": attachments})
 }
 
 func (s *Server) applyOps(w http.ResponseWriter, r *http.Request) {
@@ -457,6 +492,11 @@ func decodeBytes(data []byte, destination any) error {
 }
 
 func writeStoreError(w http.ResponseWriter, err error) {
+	var matched *store.MatchError
+	if errors.As(err, &matched) {
+		writeJSON(w, http.StatusConflict, map[string]any{"code": "open_match", "error": matched.Error(), "match": matched.Match})
+		return
+	}
 	if errors.Is(err, store.ErrHistoryConflict) || errors.Is(err, store.ErrActionConflict) {
 		code := "history_conflict"
 		if errors.Is(err, store.ErrActionConflict) {

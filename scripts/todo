@@ -122,7 +122,9 @@ todo ops [file]
 todo context
 todo history [card] [--json]
 todo log <card> <progress|decision|blocker|blocker_resolved|next_step|review_delivered> "text" [--sub <step>]
-todo add also accepts [--link KEY_OR_URL]... [--agent-context TEXT]
+todo add also accepts [--link KEY_OR_URL]... [--agent-context TEXT] [--new]
+  (an open card that already covers a Jira key or MR gets a new step instead;
+   --new always creates a separate card)
 
 <card> is a number (142 or '#142') or a task ID prefix.
 <step> is a step number (3 or '#142.3') or a subtask ID prefix.
@@ -170,9 +172,10 @@ case "$command_name" in
     ;;
   add)
     [[ $# -ge 1 ]] || die "add requires a title"
-    title="$1"; shift; lane="backlog"; kind="work"; priority=2; project=""; tag=""; notes=""; source="cli"; subs=(); links='[]'; memo=""
+    title="$1"; shift; lane=""; kind="work"; priority=2; project=""; tag=""; notes=""; source="cli"; subs=(); links='[]'; memo=""; on_match="attach"
     while [[ $# -gt 0 ]]; do
       case "$1" in
+        --new) on_match="create"; shift ;;
         --lane) [[ $# -ge 2 ]] || die "--lane requires a value"; lane="$2"; shift 2 ;;
         --kind) [[ $# -ge 2 ]] || die "--kind requires a value"; kind="$2"; shift 2 ;;
         --prio|--priority) [[ $# -ge 2 ]] || die "$1 requires a value"; priority="$2"; shift 2 ;;
@@ -192,8 +195,10 @@ case "$command_name" in
     fi
     [[ -n "${TODO_ACTOR:-}" ]] || TODO_ACTOR="$source"
     body=$(jq -n --arg title "$title" --arg lane "$lane" --arg kind "$kind" --argjson priority "$priority" --arg project "$project" --arg tag "$tag" --arg notes "$notes" --arg source "$source" --argjson subtasks "$sub_json" '{title:$title,lane:$lane,kind:$kind,priority:$priority,project:$project,tag:$tag,notes:$notes,source:$source,subtasks:$subtasks}')
-    body=$(printf '%s' "$body" | jq --argjson links "$links" --arg memo "$memo" '.+{links:$links,agentContext:$memo}')
-    api POST /api/tasks "$body" | jq -r "$JQ_REFS"'.tasks[0] | "created \(card_ref) [\(.lane)] \(.title)"'
+    body=$(printf '%s' "$body" | jq --argjson links "$links" --arg memo "$memo" '.+{links:$links,agentContext:$memo} | if .lane=="" then del(.lane) else . end')
+    api POST "/api/tasks?onMatch=$on_match" "$body" | jq -r "$JQ_REFS"'
+      if .attached then .task.number as $card | "attached to \(.task | card_ref) (\(.task.title)) as \(.subtask | step_ref($card))"
+      else .tasks[0] | "created \(card_ref) [\(.lane)] \(.title)" end'
     ;;
   show)
     [[ $# -ge 1 ]] || die "show requires a task id"
@@ -293,7 +298,7 @@ case "$command_name" in
     if [[ $# -eq 1 ]]; then body=$(<"$1"); else body=$(cat); fi
     trimmed="${body#"${body%%[![:space:]]*}"}"
     if [[ "$trimmed" == \[* ]]; then content_type="application/json"; else content_type="text/plain"; fi
-    api POST /api/import "$body" "$content_type" | jq -r '"created \(.created) task(s)"'
+    api POST /api/import "$body" "$content_type" | jq -r '"created \(.created) task(s)" + (if ((.attachments // []) | length) > 0 then ", attached \(.attachments | length) to existing cards" else "" end)'
     ;;
   ops)
     [[ $# -le 1 ]] || die "ops accepts at most one file"

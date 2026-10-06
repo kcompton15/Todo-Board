@@ -9,6 +9,7 @@ services:
       TODO_DATA_DIR: /data
       TODO_INBOX_INTERVAL: 1s
       TODO_JIRA_SITE: ${TODO_JIRA_SITE:-}
+      TODO_ISSUE_PREFIXES: ${TODO_ISSUE_PREFIXES:-}
     ports:
       - "127.0.0.1:${TODO_PORT:-7337}:7337"
     volumes:

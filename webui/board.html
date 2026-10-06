@@ -1197,6 +1197,19 @@
         border-color: color-mix(in srgb, var(--danger) 45%, var(--line));
         color: var(--ink);
       }
+      .match-notice {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+      }
+      .match-notice p {
+        flex: 1 1 220px;
+        margin: 0;
+      }
+      #matchNotice {
+        margin: 8px 16px 0;
+      }
       .activity-list {
         list-style: none;
         padding: 0;
@@ -1398,6 +1411,7 @@
         ×
       </button>
     </div>
+    <div id="matchNotice" class="notice match-notice" role="alert" hidden></div>
     <div class="summary" id="summary"></div>
     <main class="workspace" id="workspace"></main>
 
@@ -1505,6 +1519,8 @@
       </div>
       <div class="drawer-body">
         <p id="drawerMessage" class="notice error" role="alert" hidden></p>
+        <div id="drawerMatch" class="notice match-notice" role="alert" hidden>
+        </div>
         <div id="editConflict" class="notice" role="status" hidden>
           <p id="conflictMessage"></p>
           <button class="btn" id="reloadTask" type="button">
@@ -2699,14 +2715,17 @@
           },
         });
         if (!response.ok) {
-          let message = `Request failed (${response.status})`;
+          let message = `Request failed (${response.status})`,
+            body = null;
           try {
-            message = (await response.json()).error || message;
+            body = await response.json();
+            message = body.error || message;
           } catch {
             /* Keep the HTTP status message if the error body is not JSON. */
           }
           const error = new Error(message);
           error.status = response.status;
+          error.body = body;
           throw error;
         }
         if (adoptRevision && match) {
@@ -2763,17 +2782,90 @@
           }
         }
       }
-      async function createTask(input) {
+      async function createTask(
+        input,
+        onMatch = "",
+        onCreated = () => {},
+      ) {
+        hideMatchNotice();
         try {
-          const data = await api("/api/tasks", {
-            method: "POST",
-            body: JSON.stringify({ ...input, source: "web" }),
-          });
+          const data = await api(
+            "/api/tasks" + (onMatch ? "?onMatch=" + onMatch : ""),
+            {
+              method: "POST",
+              body: JSON.stringify({ ...input, source: "web" }),
+            },
+          );
+          onCreated();
           return data.tasks[0];
         } catch (error) {
-          say(error, true);
+          const match = error.status === 409 && error.body?.match;
+          if (match) {
+            error.match = match;
+            showMatchNotice(match, input, onCreated);
+          } else say(error, true);
           throw error;
         }
+      }
+      function hideMatchNotice() {
+        for (const id of ["matchNotice", "drawerMatch"]) {
+          $(id).replaceChildren();
+          $(id).hidden = true;
+        }
+      }
+      function showMatchNotice(match, input, onCreated) {
+        const fromDrawer = !!draft && isNew,
+          box = $(fromDrawer ? "drawerMatch" : "matchNotice"),
+          text = document.createElement("p"),
+          title = document.createElement("span"),
+          open = document.createElement("button"),
+          create = document.createElement("button");
+        text.textContent =
+          `#${match.number} already covers ${match.ref}. `;
+        title.className = "hint";
+        title.textContent = match.title;
+        text.append(title);
+        open.type = create.type = "button";
+        open.className = "btn primary";
+        open.textContent = `Open #${match.number}`;
+        create.className = "btn";
+        create.textContent = "Create anyway";
+        open.addEventListener("click", async () => {
+          hideMatchNotice();
+          if (!tasks.some((task) => task.id === match.id)) {
+            try {
+              await refreshTasks();
+            } catch (error) {
+              say(error, true);
+              return;
+            }
+          }
+          if (tasks.some((task) => task.id === match.id)) {
+            openDrawer(match.id);
+          } else {say(
+              `#${match.number} is no longer on the board.`,
+              true,
+            );}
+        });
+        create.addEventListener("click", async () => {
+          try {
+            await createTask(input, "create", onCreated);
+            if (fromDrawer && draft && isNew) closeDrawer();
+          } catch {
+            /* createTask already reported the failure. */
+          }
+        });
+        box.replaceChildren(text, open, create);
+        if (!fromDrawer) {
+          const dismiss = document.createElement("button");
+          dismiss.type = "button";
+          dismiss.className = "btn";
+          dismiss.textContent = "Dismiss";
+          dismiss.addEventListener("click", hideMatchNotice);
+          box.append(dismiss);
+        }
+        box.hidden = false;
+        open.focus({ preventScroll: true });
       }
       async function createSubtask(taskId, title, lane = "") {
         try {
@@ -3061,13 +3153,25 @@
           const identity = identify(taskInput);
           taskInput.value = "";
           try {
-            await createTask({
-              title,
-              lane: taskInput.dataset.addLane,
-              kind: "work",
-              project: taskInput.dataset.addProject ||
-                $("projectFilter").value.replace("__unassigned__", ""),
-            });
+            await createTask(
+              {
+                title,
+                lane: taskInput.dataset.addLane,
+                kind: "work",
+                project: taskInput.dataset.addProject ||
+                  $("projectFilter").value.replace(
+                    "__unassigned__",
+                    "",
+                  ),
+              },
+              "",
+              () => {
+                const current = locate(identity);
+                if (current && current.value === title) {
+                  current.value = "";
+                }
+              },
+            );
           } catch {
             const current = locate(identity);
             if (current && !current.value) current.value = title;
@@ -3243,6 +3347,7 @@
         if (!draft) return;
         $("editConflict").hidden = true;
         $("drawerMessage").hidden = true;
+        hideMatchNotice();
         $("completionNotice").hidden = true;
         $("saveTask").disabled = false;
         $("deleteTask").disabled = false;
@@ -3284,6 +3389,7 @@
         $("fTitle").focus({ preventScroll: true });
       }
       function closeDrawer() {
+        hideMatchNotice();
         $("workspace").inert = false;
         document.querySelector(".topbar").inert = false;
         openId = null;
@@ -3436,6 +3542,7 @@
           }
           closeDrawer();
         } catch (error) {
+          if (error.match) return;
           say(error, true);
           if (error.status === 409 || error.status === 404) {
             try {

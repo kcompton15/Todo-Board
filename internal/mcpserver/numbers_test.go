@@ -27,10 +27,11 @@ func TestToolsAcceptCardAndStepNumbers(t *testing.T) {
 	if _, err := client.CreateTask(ctx, CreateTaskInput{Title: "filler"}); err != nil {
 		t.Fatal(err)
 	}
-	created, err := client.CreateTask(ctx, CreateTaskInput{Title: "numbered", Lane: "today", Kind: "review", Subtasks: []string{"a", "b"}})
+	result, err := client.CreateTask(ctx, CreateTaskInput{Title: "numbered", Lane: "today", Kind: "review", Subtasks: []string{"a", "b"}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	created := result.Task
 	if created.Number != 2 || created.Subtasks[1].Number != 2 {
 		t.Fatalf("created = %#v", created)
 	}

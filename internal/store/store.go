@@ -157,29 +157,17 @@ func (s *Store) Get(id string) (Task, error) {
 	return cloneTask(task), nil
 }
 
+// CreateMany always creates, skipping open-card matching.
 func (s *Store) CreateMany(inputs []TaskInput, sourceOverride string, options ...Mutation) ([]Task, error) {
-	if len(inputs) == 0 {
-		return nil, errors.New("at least one task is required")
+	outcomes, err := s.CreateOrAttach(inputs, sourceOverride, OnMatchCreate, options...)
+	if err != nil {
+		return nil, err
 	}
-	if len(options) == 0 {
-		options = []Mutation{{Actor: sourceOverride}}
+	created := make([]Task, len(outcomes))
+	for i, outcome := range outcomes {
+		created[i] = outcome.Task
 	}
-	var created []Task
-	err := s.transact(func(tasks map[string]Task) error {
-		created = make([]Task, 0, len(inputs))
-		for i, input := range inputs {
-			if sourceOverride != "" {
-				input.Source = sourceOverride
-			}
-			task, err := s.createTask(tasks, input)
-			if err != nil {
-				return fmt.Errorf("tasks[%d]: %w", i, err)
-			}
-			created = append(created, task)
-		}
-		return nil
-	}, options...)
-	return cloneTasks(created), err
+	return created, nil
 }
 
 func (s *Store) Replace(id string, input TaskInput, options ...Mutation) (Task, error) {
@@ -434,6 +422,19 @@ func (s *Store) ApplyEnvelope(envelope OpsEnvelope, options ...Mutation) ([]Task
 				*history = updated
 				continue
 			}
+			if operation.Op == "" || operation.Op == "create" {
+				policy := operation.OnMatch
+				if policy == "" {
+					policy = OnMatchAttach
+				}
+				if _, err := s.createOrAttach(tasks, history, operationInput(operation, source), policy, options[0].Actor); err != nil {
+					return fmt.Errorf("ops[%d]: %w", i, err)
+				}
+				continue
+			}
+			if operation.OnMatch != "" {
+				return fmt.Errorf("ops[%d]: onMatch applies only to create", i)
+			}
 			if err := s.applyOperation(tasks, operation, source); err != nil {
 				return fmt.Errorf("ops[%d]: %w", i, err)
 			}
@@ -641,42 +642,40 @@ func (s *Store) applyPatch(tasks map[string]Task, current Task, patch TaskPatch)
 	return updated, nil
 }
 
+func operationInput(operation Operation, source string) TaskInput {
+	input := TaskInput{Subtasks: operation.Subtasks, Links: operation.Links, AgentContext: operation.AgentContext, ReconcileMode: operation.ReconcileMode}
+	if operation.Title != nil {
+		input.Title = *operation.Title
+	}
+	if operation.Lane != nil {
+		input.Lane = *operation.Lane
+	}
+	if operation.Kind != nil {
+		input.Kind = *operation.Kind
+	}
+	if operation.Priority != nil {
+		input.Priority = *operation.Priority
+	}
+	if operation.Project != nil {
+		input.Project = *operation.Project
+	}
+	if operation.Tag != nil {
+		input.Tag = *operation.Tag
+	}
+	if operation.Notes != nil {
+		input.Notes = *operation.Notes
+	}
+	input.Source = source
+	if operation.Source != nil {
+		input.Source = *operation.Source
+	}
+	input.Order = operation.Order
+	return input
+}
+
 func (s *Store) applyOperation(tasks map[string]Task, operation Operation, source string) error {
 	op := operation.Op
-	if op == "" {
-		op = "create"
-	}
 	switch op {
-	case "create":
-		input := TaskInput{Subtasks: operation.Subtasks, Links: operation.Links, AgentContext: operation.AgentContext, ReconcileMode: operation.ReconcileMode}
-		if operation.Title != nil {
-			input.Title = *operation.Title
-		}
-		if operation.Lane != nil {
-			input.Lane = *operation.Lane
-		}
-		if operation.Kind != nil {
-			input.Kind = *operation.Kind
-		}
-		if operation.Priority != nil {
-			input.Priority = *operation.Priority
-		}
-		if operation.Project != nil {
-			input.Project = *operation.Project
-		}
-		if operation.Tag != nil {
-			input.Tag = *operation.Tag
-		}
-		if operation.Notes != nil {
-			input.Notes = *operation.Notes
-		}
-		input.Source = source
-		if operation.Source != nil {
-			input.Source = *operation.Source
-		}
-		input.Order = operation.Order
-		_, err := s.createTask(tasks, input)
-		return err
 	case "patch":
 		current, ok := tasks[operation.ID]
 		if !ok {

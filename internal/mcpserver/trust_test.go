@@ -25,10 +25,11 @@ func TestMCPTrustFeaturesEndToEnd(t *testing.T) {
 	}
 	server := New(client)
 	ctx := context.Background()
-	task, err := client.CreateTask(ctx, CreateTaskInput{Title: "MCP task", Lane: "today", Kind: "review", Subtasks: []string{"Step"}})
+	created, err := client.CreateTask(ctx, CreateTaskInput{Title: "MCP task", Lane: "today", Kind: "review", Subtasks: []string{"Step"}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	task := created.Task
 	if task.Revision != 1 || task.Kind != "review" {
 		t.Fatalf("create revision %d", task.Revision)
 	}
@@ -88,10 +89,11 @@ func TestMCPUpdateTaskEmptyKindResetsToWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := New(client)
-	task, err := client.CreateTask(context.Background(), CreateTaskInput{Title: "MCP review", Kind: "review"})
+	created, err := client.CreateTask(context.Background(), CreateTaskInput{Title: "MCP review", Kind: "review"})
 	if err != nil {
 		t.Fatal(err)
 	}
+	task := created.Task
 
 	args, err := json.Marshal(map[string]any{"id": task.ID, "kind": "", "expectedRevision": task.Revision})
 	if err != nil {

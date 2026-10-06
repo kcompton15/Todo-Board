@@ -127,7 +127,7 @@ func (w *Watcher) apply(path string) error {
 		if err := json.Unmarshal(data, &inputs); err != nil {
 			return fmt.Errorf("parse create list: %w", err)
 		}
-		if _, err := w.store.CreateMany(inputs, "inbox"); err != nil {
+		if _, err := w.store.CreateOrAttach(inputs, "inbox", store.OnMatchAttach); err != nil {
 			return err
 		}
 		return nil

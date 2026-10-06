@@ -169,7 +169,7 @@ func TestBoardClientTaskWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
-	if createdTask.ID != "task-456" || createdTask.Kind != "probe" || created.Source != claudeChatSource {
+	if createdTask.Task.ID != "task-456" || createdTask.Task.Kind != "probe" || created.Source != claudeChatSource {
 		t.Fatalf("CreateTask = %+v, request source = %q", createdTask, created.Source)
 	}
 
