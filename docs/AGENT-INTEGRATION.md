@@ -2,9 +2,11 @@
 
 The board is only useful if agents update it as part of their real work. Local CLI sessions use `todo`, Claude Desktop chat uses the local MCP bridge, and chats that can write files but cannot reach the board use the watched inbox.
 
-Record every implementation MR, including sibling repositories, with `todo link <card> <key|url> [--sub <prefix>] [--role required|reference]`. Required links cover the exact card/child outcome; references are examples, dependencies or historical context. `todo unlink <card> <link-prefix>` removes a link. Ambiguous prefixes fail. `todo add` accepts repeated `--link` and `--agent-context`. `todo show` displays scope, role and cached status.
+Cards and steps have numbers, `#142` and `#142.3`. Every CLI card argument takes `142`, `'#142'` or an ID prefix, and every step argument takes its number (`3`), `'#142.3'` or an ID prefix, so `todo show 142` and `todo check 142 3` work. MCP `id` arguments take `142`, `#142` or the full ID, and `subtaskId` takes a step number.
 
-After you finalize review findings, record `todo log <card> review_delivered "finalized report/findings" [--sub <prefix>]` for covered scopes. Check only completed steps, run `todo done` when all steps are complete, then return the report without another confirmation. Receipts supplement future recovery: the configured reviewer's matching substantive published GitLab comments or approval, or merged/closed review targets, can also finish a review with coverage for every MR in that review round. Historical reviews do not require receipts. Local reviews whose findings remain in chat benefit from a receipt. Only reviews without qualifying evidence remain uncertain; inactivity is insufficient. This grants no authority to post comments or approvals to GitLab.
+Record every implementation MR, including sibling repositories, with `todo link <card> <key|url> [--sub <step>] [--role required|reference]`. Required links cover the exact card/child outcome; references are examples, dependencies or historical context. `todo unlink <card> <link-prefix>` removes a link. Ambiguous prefixes fail. `todo add` accepts repeated `--link`, `--agent-context` and `--new`. `todo show` displays scope, role and cached status.
+
+After you finalize review findings, record `todo log <card> review_delivered "finalized report/findings" [--sub <step>]` for covered scopes. Check only completed steps, run `todo done` when all steps are complete, then return the report without another confirmation. Receipts supplement future recovery: the configured reviewer's matching substantive published GitLab comments or approval, or merged/closed review targets, can also finish a review with coverage for every MR in that review round. Historical reviews do not require receipts. Local reviews whose findings remain in chat benefit from a receipt. Only reviews without qualifying evidence remain uncertain; inactivity is insufficient. This grants no authority to post comments or approvals to GitLab.
 
 `todo reconcile <card> manual` excludes all future automatic updates, including link discovery/cache updates. Use open steps or manual mode for deployment/QA/acceptance beyond merge. `todo memo <card> "text"` saves up to 4000 Unicode characters of agent context; the ordinary UI hides it, but API/history expose it. It is not a secret store.
 
@@ -12,10 +14,10 @@ After you finalize review findings, record `todo log <card> review_delivered "fi
 
 Run `make install-claude-desktop` from the repository root, quit and reopen Claude Desktop, and start a new chat. The `todo-board` MCP server exposes ten tools:
 
-- `list_tasks` searches and filters before creation.
+- `list_tasks` searches and filters before creation. Any query word can match, best matches first, and each result carries its `number`.
 - `get_task` reads one card and its subtasks.
-- `get_activity` reads the latest 50 retained changes, optionally filtered by full task ID (including deleted IDs).
-- `create_task` creates a card with source `claude-chat`.
+- `get_activity` reads the latest 50 retained changes, optionally filtered by task ID or card number (deleted cards by full ID).
+- `create_task` creates a card with source `claude-chat`. When an open card already covers a Jira key or MR in its links or title, the default `onMatch: "attach"` adds a step there instead and returns `attached: true`, the card, the new `subtask` and a `message` such as `attached to #142 (...) as #142.4`. `onMatch: "create"` forces a separate card; `"reject"` fails with an error naming the open card.
 - `update_task` changes fields or moves a card between lanes.
 - `add_subtask` adds a step to an existing outcome, optionally in its own lane.
 - `update_subtask` renames a step or moves its independent lane; `done` remains a completion shortcut.
@@ -34,13 +36,15 @@ Always run `todo find "keywords"` unless the session-start hook already showed t
 - A match in In progress is the current work. Add or check subtasks; do not create a duplicate.
 - A match in Today or Backlog should be started with `todo start <id>`.
 - A match in Blocked should move back to In progress only when the blocker is actually resolved.
-- A match in Done represents older work; create a new card for genuinely new work.
+- A match in Done represents older work; create a new card for genuinely new work. If it shares a Jira key or MR with the Done card, its notes start with `Follow-on to #N.` automatically.
 - A partial match normally belongs as a subtask under the existing human-sized unit of work.
+
+Keep one open card per Jira key or MR. Re-review rounds, fix-ups and follow-up passes on the same key or MR are steps on that card. Whenever a Jira key or MR exists, pass `--link KEY` (or put the MR, or a key whose project is in `TODO_ISSUE_PREFIXES`, in the title): `todo add` then attaches to the open card that covers it and prints `attached to #N (...) as #N.M`. Use `--new` only for a genuinely separate outcome. Refer to cards and steps by `#N` and `#N.M` in messages and notes.
 
 Use one task per meaningful outcome, not one per file. A plain answer creates no card. Create a card only under these rules:
 
 - `work`: the human asked for a change.
-- `review`: the human asked for a review. Put the merge request URL in notes.
+- `review`: the human asked for a review. Pass the merge request URL with `--link` (MCP: `links`), not in notes.
 - `followup`: the conversation produced something the human must do.
 - `probe`: a question required real investigation and left artifacts worth finding again.
 
@@ -53,8 +57,8 @@ For the CLI, pass the kind at creation with `todo add "title" --kind work|follow
 Create or start a qualifying task before beginning. Check subtasks as they finish rather than all at the end. Record blockers with a reason:
 
 ```bash
-todo block t123 "waiting for the SSO redirect URI"
-todo submove t123 s456 blocked
+todo block 142 "waiting for the SSO redirect URI"
+todo submove 142 3 blocked
 ```
 
 A subtask lane is independent of the parent task. Move the subtask when only that step is blocked or in progress; move the parent only when the overall outcome changes state.
@@ -88,7 +92,7 @@ data/inbox/.staging-1694970000-chat.json
 data/inbox/1694970000-chat.json
 ```
 
-The payload is either an array of new tasks or an operation envelope documented in `docs/API.md`. Example:
+The payload is either an array of new tasks or an operation envelope documented in `docs/API.md`. Both attach a new task to an open card that already covers its Jira key or MR, as `todo add` does; set `"onMatch":"create"` on a `create` op to force a separate card. Existing-task operations take full IDs, not numbers. Example:
 
 ```json
 {

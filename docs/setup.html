@@ -216,10 +216,10 @@ scripts/team-setup</code></pre>
 
     <section id="daily">
       <h2>How it behaves day to day</h2>
-      <p>You don't have to do anything. Before creating a card, the agent runs <code>todo find</code>, so it updates an existing card rather than making a duplicate. It creates one card per outcome, with steps as subtasks, and picks one of four kinds:</p>
+      <p>You don't have to do anything. Before creating a card, the agent runs <code>todo find</code>, so it updates an existing card rather than making a duplicate. It creates one card per outcome, with steps as subtasks, and keeps one open card per Jira key or MR: re-reviews and fix-ups become steps on that card, and <code>todo add --link KEY</code> attaches to it automatically. Cards and steps have numbers like <code>#142</code> and <code>#142.3</code>. Each card is one of four kinds:</p>
       <div class="kinds">
         <div class="kind"><b>work</b><span>You asked for a change. Closed only once verified; otherwise left "ready to close".</span></div>
-        <div class="kind"><b>review</b><span>You asked for a review. MR URL in notes; closed when the findings are delivered.</span></div>
+        <div class="kind"><b>review</b><span>You asked for a review. MR URL as a link; closed when the findings are delivered.</span></div>
         <div class="kind"><b>followup</b><span>Something only you can do. Agents never move it.</span></div>
         <div class="kind"><b>probe</b><span>An investigation worth finding again. Closed when the answer is delivered.</span></div>
       </div>
@@ -227,7 +227,8 @@ scripts/team-setup</code></pre>
       <div class="term">
         <div class="term-bar"><span>zsh</span><button class="copy" type="button" data-copy="todo">Copy</button></div>
         <pre id="todo-cmd"><code>todo ls
-todo add "Ship the quote rounding fix" --kind work --project Billing
+todo add "Ship the quote rounding fix" --kind work --project Billing --link PROJ-123
+todo find "quote rounding"
 todo help</code></pre>
       </div>
     </section>

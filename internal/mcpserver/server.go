@@ -20,7 +20,7 @@ const (
 	serverVersion         = "1.0.0"
 	latestProtocolVersion = "2025-11-25"
 	maxRPCMessage         = 1 << 20
-	mcpInstructions       = "Use list_tasks before create_task to avoid duplicates. A plain answer creates no card. Create work when the human asks for a change; create review when the human asks for a review and put the merge request URL in notes; create followup only when the conversation produces something the human must do; create probe only when a question required real investigation and left artifacts worth finding again. Treat one task as one human-sized outcome and use subtasks for steps. Close your own review and probe cards when the deliverable is returned. Close work only when the human asked for that work and it is verified; otherwise leave it open and record a next_step saying it is ready to close through a work-log-capable client. Never move a followup card. These lifecycle updates are authorized side effects; do not ask separately whether to perform them."
+	mcpInstructions       = "Use list_tasks before create_task to avoid duplicates. A plain answer creates no card. Keep one open card per Jira key or MR: re-review rounds, fix-ups and follow-up passes are steps on that card. Cards and steps have numbers (#142, #142.3); any id argument accepts 142, #142 or the full ID, and subtaskId accepts a step number. Put Jira keys and merge request URLs in links, not notes; create_task then attaches to the open card that already covers them and says so. Create work when the human asks for a change; create review when the human asks for a review and pass the merge request URL as a link; create followup only when the conversation produces something the human must do; create probe only when a question required real investigation and left artifacts worth finding again. Treat one task as one human-sized outcome and use subtasks for steps. Close your own review and probe cards when the deliverable is returned. Close work only when the human asked for that work and it is verified; otherwise leave it open and record a next_step saying it is ready to close through a work-log-capable client. Never move a followup card. These lifecycle updates are authorized side effects; do not ask separately whether to perform them."
 )
 
 var supportedProtocolVersions = map[string]bool{
@@ -401,9 +401,9 @@ func toolDefinitions() []toolDefinition {
 		{Name: "get_activity", Title: "Read workboard activity", Description: "Read the latest 50 retained task changes with self-reported client attribution. Omit id for board activity, including deleted tasks. Use a task ID or card number to filter. History before the upgrade is unavailable.", InputSchema: objectSchema(map[string]any{"id": stringProperty("Optional task ID or card number")}, nil), Annotations: annotations(true, false, true)},
 		{
 			Name: "list_tasks", Title: "Find workboard tasks",
-			Description: "Search the Todo Board before create_task to avoid duplicate cards. A plain answer creates no card. Filter by kind: work for a requested change, review for a requested review, followup for a human action, or probe for an investigated question with reusable artifacts. Filters are combined; with no filters, every task is returned.",
+			Description: "Search the Todo Board before create_task to avoid duplicate cards. A plain answer creates no card. The query is split into words; a card matches when any word appears in its title, notes, project, tag, step titles, link refs or number (142 or #142), and the best matches come first. Results include each card's number. Filter by kind: work for a requested change, review for a requested review, followup for a human action, or probe for an investigated question with reusable artifacts. Filters are combined; with no filters, every task is returned.",
 			InputSchema: objectSchema(map[string]any{
-				"query":    stringProperty("Text to search in title, notes, and project"),
+				"query":    stringProperty("Words to search in title, notes, project, tag, steps, link refs and card number; any word matches"),
 				"lane":     enumProperty("Lane filter", store.LaneOrder),
 				"kind":     enumProperty("Card kind filter", store.KindOrder),
 				"project":  stringProperty("Exact project or epic name"),
@@ -422,7 +422,7 @@ func toolDefinitions() []toolDefinition {
 		},
 		{
 			Name: "create_task", Title: "Create a workboard task",
-			Description: "Create one human-sized outcome only after list_tasks finds no active match. Use kind work only for a human-requested change; review for a human-requested review and put the merge request URL in notes; followup only for something the human must do; probe only for a question that required real investigation and left reusable artifacts. A plain answer creates no card. Creation under these rules is an authorized side effect; do not ask separately. Use subtasks for concrete steps.",
+			Description: "Create one human-sized outcome only after list_tasks finds no active match. Put Jira keys and merge request URLs in links (MRs in the title also count, and Jira keys whose project prefix the server is configured to read). If an open card already covers one of them, the default onMatch attach adds this as a step on that card and returns attached true with the task, the new subtask and a message such as \"attached to #142 (...) as #142.4\"; onMatch create forces a separate card, and reject returns an error naming the open card. Use kind work only for a human-requested change; review for a human-requested review with the merge request URL as a link; followup only for something the human must do; probe only for a question that required real investigation and left reusable artifacts. A plain answer creates no card. Creation under these rules is an authorized side effect; do not ask separately. Use subtasks for concrete steps.",
 			InputSchema: objectSchema(map[string]any{
 				"title":    stringProperty("Required outcome-oriented task title"),
 				"lane":     enumProperty("Initial lane; defaults to backlog", store.LaneOrder),
@@ -430,7 +430,7 @@ func toolDefinitions() []toolDefinition {
 				"priority": integerProperty("1 critical, 2 normal (default), or 3 low", 1, 3),
 				"project":  stringProperty("Project or epic grouping, such as Web or API"),
 				"tag":      stringProperty("Work-type tag without spaces, such as Review or Incident"),
-				"notes":    stringProperty("Context, decisions, links, or blocker details"),
+				"notes":    stringProperty("Context, decisions, or blocker details; put Jira keys and MR URLs in links"),
 				"subtasks": map[string]any{
 					"type": "array", "description": "Concrete steps within this outcome",
 					"items": map[string]any{"type": "string"}, "maxItems": store.MaxSubtasks,

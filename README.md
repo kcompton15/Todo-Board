@@ -32,11 +32,13 @@ Go is not required. Anything compiled for your Mac is built inside Docker.
 The integrations tell agents to run `todo find` before creating anything, so they update an existing card instead of making a duplicate. A plain answer creates no card. Otherwise they create one card per outcome, with steps as subtasks, and pick one of four kinds:
 
 - `work` when you asked for a change.
-- `review` when you asked for a review. The merge request URL goes in notes.
+- `review` when you asked for a review. The merge request URL goes in as a `--link`, not in notes.
 - `followup` when the conversation produces something the human must do. Agents never move these.
 - `probe` only when a question required real investigation and left something worth finding again.
 
-Agents close their own reviews and probes when they hand back the result. They close `work` only when you asked for it and it is verified. Otherwise they leave it open and record a `next_step` saying it is ready to close. These updates are authorized side effects of the assignment, so agents do not ask separately before creating or closing a card. A session-start hook loads your active cards into each new Claude Code or Codex session. If the board is down, agents mention it once and keep working. Details are in [docs/AGENT-INTEGRATION.md](docs/AGENT-INTEGRATION.md).
+They keep one open card per Jira key or merge request. Re-review rounds, fix-ups and follow-up passes become steps on that card, because `todo add --link KEY` attaches to it automatically; `--new` is only for a genuinely separate outcome. Cards and steps are referred to as `#N` and `#N.M`.
+
+Agents close their own reviews and probes when they hand back the result. They close `work` only when you asked for it and it is verified. Otherwise they leave it open and record a `next_step` saying it is ready to close. These updates are authorized side effects of the assignment, so agents do not ask separately before creating or closing a card. A session-start hook loads your active cards, plus a short list of open backlog and probe cards, into each new Claude Code or Codex session. If the board is down, agents mention it once and keep working. Details are in [docs/AGENT-INTEGRATION.md](docs/AGENT-INTEGRATION.md).
 
 ## Command line
 
@@ -46,18 +48,25 @@ Agents close their own reviews and probes when they hand back the result. They c
 todo health
 todo find "rate confirmation"
 todo add "Review billing changes" --kind review --project Billing --tag Review \
-  --notes "team/api!175" --sub "Review API MR" --sub "Review web MR"
+  --link "team/api!175" --sub "Review API MR" --sub "Review web MR"
 todo ls --project Web
-todo start tabc
-todo sub tabc "Confirm callback URLs" --lane doing
-todo check tabc sabc
-todo block tabc "waiting for product clarification"
-todo link tabc PROJ-123 --role required
-todo log tabc progress "API change merged"
-todo done tabc
+todo show 142
+todo start 142
+todo sub 142 "Confirm callback URLs" --lane doing
+todo check 142 3
+todo block '#142' "waiting for product clarification"
+todo link 142 PROJ-123 --role required
+todo log 142 progress "API change merged"
+todo done 142
 ```
 
-IDs can be shortened to any unambiguous prefix. Run `todo help` for every command. When the board is unreachable, the CLI exits with code 3 and one short message so agent sessions can carry on.
+Cards are numbered `#142` and their steps `#142.3`. A card argument takes `142`, `'#142'` (quote it, or the shell treats `#` as a comment) or an unambiguous ID prefix. A step argument takes its number (`3`), `'#142.3'` or an ID prefix. `todo ls`, `show`, `add`, `sub` and `context` print numbers; `show` and `--json` keep the full IDs.
+
+`todo add` attaches instead of duplicating. When an open card already covers a Jira key or merge request passed with `--link`, or a merge request in the title, or a title key whose project is listed in `TODO_ISSUE_PREFIXES`, the new item becomes a step on that card and the CLI prints `attached to #142 (<title>) as #142.4`. When only Done cards cover it, a new card is created with `Follow-on to #N.` in its notes. `--new` always creates a separate card.
+
+`todo find "words"` matches a card when any word appears in its title, notes, project, tag, step titles or link refs, or equals its number, and prints the best 10 matches first. Project and tag spellings that differ only by case, spaces, `_` or `-` are folded to the spelling most cards already use. `bash scripts/backfill-projects.sh` previews fixes for spellings already on the board, `--apply` writes them, and near-duplicate names are reported but left alone.
+
+Run `todo help` for every command. When the board is unreachable, the CLI exits with code 3 and one short message so agent sessions can carry on.
 
 `todo import` reads a plain-text format: `%project`, `#tag`, `!1` to `!3` for priority and `@lane`, with indented lines as subtasks.
 
@@ -99,7 +108,7 @@ TODO_JIRA_SITE=yourcompany.atlassian.net TODO_ISSUE_PREFIXES=PROJ,OPS docker com
 
 **Reconciler.** A launchd agent that closes cards when the evidence is in: required merge requests merged, a Jira issue Done, or a review you approved. It only reads GitLab and Jira, and only writes to your board. It needs `glab`, a Jira API token in the Keychain, and `~/.config/todo-board/reconciler.json`. See [docs/RECONCILER.md](docs/RECONCILER.md).
 
-**Claude Desktop.** `make install-claude-desktop` builds a local MCP server named `todo-board` and adds it to the Claude Desktop config. It works only while your Mac and the container are running. See [docs/AGENT-INTEGRATION.md](docs/AGENT-INTEGRATION.md#claude-desktop-chat).
+**Claude Desktop.** `make install-claude-desktop` builds a local MCP server named `todo-board` and adds it to the Claude Desktop config. Its `create_task` attaches to an open card that already covers the same Jira key or merge request unless `onMatch` says otherwise, and every `id` accepts a card number. It works only while your Mac and the container are running. See [docs/AGENT-INTEGRATION.md](docs/AGENT-INTEGRATION.md#claude-desktop-chat).
 
 **Inbox.** Chat sessions that can write files but cannot reach `127.0.0.1` can drop a JSON payload in `data/inbox/`. The server applies it atomically and moves it to `.processed/` or `.failed/`. See [docs/AGENT-INTEGRATION.md](docs/AGENT-INTEGRATION.md#filesystem-inbox-for-remote-chat) and [reference/sample-inbox.json](reference/sample-inbox.json).
 
@@ -111,7 +120,7 @@ State lives in `data/tasks.json`, a versioned JSON file written through a tempor
 cp data/tasks.json "data/tasks.$(date +%Y%m%d-%H%M%S).backup.json"
 ```
 
-The first write by a newer version saves `data/tasks.json.v1-<timestamp>.backup` automatically. An older binary refuses a file written by a newer one.
+The first write by a newer version saves a backup of the old format automatically: `data/tasks.json.v1-<timestamp>.backup` for version 1 files and `data/tasks.json.v2-<timestamp>.backup` before card numbers are added. An older binary refuses a file written by a newer one.
 
 ## Development
 

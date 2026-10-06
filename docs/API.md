@@ -4,8 +4,8 @@ Base URL: `http://127.0.0.1:7337`. There is no authentication because the host p
 
 ## Tasks
 
-- `GET /api/tasks` returns `{"tasks":[...]}` in lane, manual order, priority, and ID sequence. Optional filters are `lane`, `project`, `tag`, `kind`, `priority`, and `q`. Text search also matches subtask titles. `kind` must be one of the values below; an unknown value returns `400 {"error":"invalid kind"}`.
-- `POST /api/tasks` creates one task object or an envelope such as `{"tasks":[...]}`. It returns an array under `tasks` even for one item.
+- `GET /api/tasks` returns `{"tasks":[...]}` in lane, manual order, priority, and ID sequence. Optional filters are `lane`, `project`, `tag`, `kind`, `priority`, and `q`. `kind` must be one of the values below; an unknown value returns `400 {"error":"invalid kind"}`. See [Search](#search) for how `q` matches and ranks.
+- `POST /api/tasks` creates one task object or an envelope such as `{"tasks":[...]}`. It returns an array under `tasks` even for one item. `?onMatch=attach|reject|create` decides what happens when an open card already covers the new card's Jira key or MR; see [Matching open cards](#matching-open-cards). The default here is `reject`.
 - `GET /api/tasks/{id}` returns one task.
 - `PUT /api/tasks/{id}` replaces editable fields. The path ID and original creation time remain authoritative.
 - `PATCH /api/tasks/{id}` merges any of `title`, `lane`, `kind`, `priority`, `project`, `tag`, `notes`, `source`, `order`, and `subtasks`.
@@ -25,12 +25,42 @@ Task example:
   "tag": "Review",
   "notes": "API and web MRs are one coordinated review.",
   "source": "codex",
+  "number": 142,
+  "nextSubtaskNumber": 2,
   "order": 1000,
   "createdAt": "2026-09-17T16:30:00Z",
   "updatedAt": "2026-09-17T16:45:00Z",
-  "subtasks": [{"id":"sabc1234","title":"Review API MR","lane":"blocked","done":false}]
+  "subtasks": [{"id":"sabc1234","number":1,"title":"Review API MR","lane":"blocked","done":false}]
 }
 ```
+
+## Numbers and references
+
+Every card has a `number` and every subtask has a per-card `number`, written `#142` and `#142.3`. The server assigns them; clients cannot set them. A `number` sent on PUT, PATCH or create is ignored, so a full task sent back unchanged still saves. Card numbers come from a board-wide counter (`nextNumber` in `tasks.json`) and step numbers from the card's `nextSubtaskNumber`. Neither is reused after a delete, and a failed or rolled-back transaction consumes none, so gaps are normal.
+
+Every `{id}` route (`GET/PUT/PATCH/DELETE /api/tasks/{id}`, subtasks, links, work-log and history) accepts the full ID, `142` or `%23142` (URL-encoded `#142`). A step reference such as `142.3` on a card route returns 400 naming the subtask route. `{subtaskID}` accepts the subtask ID, its step number (`3` or `%233`), or `142.3` when 142 is that card. An unknown number returns the route's usual 404. `taskId` on `/api/activity` and `/api/history` resolves numbers too. Ops, inbox envelopes and import still take full IDs.
+
+`tasks.json` is state version 3. A version 2 file is numbered on load in `(createdAt, id)` order, with steps numbered in array order, and `tasks.json.v2-<UTC timestamp>.backup` is written before the first version 3 save.
+
+## Matching open cards
+
+On create, the server reads Jira keys whose project is listed in `TODO_ISSUE_PREFIXES` (none when it is unset), GitLab MR URLs and `group/project!N` refs from the title and adds them as `required` links. Explicit links win on role, and an explicit link accepts any Jira key. A card covers a ref when its own required links (card or step scope) include it, or its title contains it. Reference links never match.
+
+When an open card (lane not `done`) covers one of the new card's required refs, `onMatch` decides:
+
+- `attach` adds a step to that card in one transaction: the step title is the incoming title (cut to 300 characters), in the input lane or `today`. Refs the card lacks are added as card links, and a `progress` work log `attached from <source>: <title>` records the incoming notes and step titles. A single attach returns 200 `{"attached":true,"task":{...},"subtask":{...}}`.
+- `reject` returns 409 `{"code":"open_match","error":"#142 already covers PROJ-942; use onMatch=attach to add a step there or onMatch=create for a separate card","match":{"id":"tm...","number":142,"title":"...","ref":"PROJ-942"}}`. Nothing is written.
+- `create` always makes a new card.
+
+When a new card is created and a Done card covers one of its refs, its notes start with `Follow-on to #N.`, naming the newest Done match.
+
+A batch that attaches anything returns `{"tasks":[created...],"attachments":[{"task":{...},"subtask":{...}}]}`, with 201 if any card was created and 200 if every item attached. Defaults by surface: `POST /api/tasks` and the web UI `reject` (the UI offers *Open #N* or *Create anyway*); `todo add`, MCP `create_task`, inbox arrays, ops `create` and `/api/import` `attach`. `todo add --new` and MCP `onMatch:"create"` force a separate card.
+
+## Search
+
+`q` is split into lowercase words. A card matches when any word appears in its title, notes, project, tag, step titles, link refs or URLs, or equals its number (`142`, `#142`, `142.3`). Results are sorted by score, then the usual order: an exact number scores 3, a title hit at a word start 2, and any other hit 1, counted once per word. `todo find` prints the top 10 and how many more matched. The browser filter applies the same words and fields as an any-match filter but keeps lane order.
+
+Project and tag spellings are folded on write: names that differ only by case, spaces, `_` or `-` are stored as the spelling most other cards already use (ties prefer an all-lowercase spelling, then the alphabetically first). Create and PUT always fold; PATCH folds only the fields it sends. `scripts/backfill-projects.sh` (dry run by default, `--apply` to write) fixes drifted spellings already on the board and reports near-duplicates without changing them.
 
 Lanes are `backlog`, `today`, `doing`, `blocked`, and `done`. Kinds are `work`, `followup`, `review`, and `probe`. An omitted `kind` on create or full replacement defaults to `work`, and legacy persisted tasks without `kind` load as `work`. Omitting `kind` on PATCH preserves the existing value; an explicitly empty mutation `kind` resets/defaults to `work`. Non-empty unsupported mutation values fail validation, while an unsupported `GET /api/tasks?kind=...` filter returns `400 {"error":"invalid kind"}`. Priorities are `1` (critical), `2` (normal), and `3` (low). Project may contain spaces; tag may not.
 
@@ -59,7 +89,7 @@ Subtask lane changes never move the parent, and parent lane changes never cascad
 
 ## Bulk operations
 
-`POST /api/import` accepts `text/plain` using the task DSL or an `application/json` array of task inputs. `X-Source` sets provenance and defaults to `cli`.
+`POST /api/import` accepts `text/plain` using the task DSL or an `application/json` array of task inputs. `X-Source` sets provenance and defaults to `cli`. It always attaches to covering open cards and returns 201 `{"created":N,"tasks":[...],"attachments":[...]}`.
 
 `POST /api/ops` atomically applies an envelope:
 
@@ -67,7 +97,7 @@ Subtask lane changes never move the parent, and parent lane changes never cascad
 {
   "source": "codex",
   "ops": [
-    {"op":"create","title":"New task","project":"Web","kind":"work"},
+    {"op":"create","title":"New task","project":"Web","kind":"work","onMatch":"attach"},
     {"op":"patch","id":"tmxyz","lane":"doing","kind":"followup"},
     {"op":"subtask","id":"tmxyz","title":"New step","lane":"doing"},
     {"op":"check","id":"tmxyz","subtaskId":"sabc","done":true},
@@ -77,7 +107,7 @@ Subtask lane changes never move the parent, and parent lane changes never cascad
 }
 ```
 
-If any operation is invalid, no operation is persisted. Per-operation errors name the failing array index; final transaction completion validation identifies the offending task. A `work_log` operation requires an existing task `id` and a nested `workLog` using the same typed fields as the direct work-log endpoint; it can therefore journal and close a card in the same atomic persistence transaction. Each changed task receives one activity entry and one revision increment per transaction, even when multiple operations target it. Activity describes the net committed change, not transient intermediate operations.
+`onMatch` is optional on `create` ops (default `attach`) and rejected on any other op. If any operation is invalid, no operation is persisted. Per-operation errors name the failing array index; final transaction completion validation identifies the offending task. A `work_log` operation requires an existing task `id` and a nested `workLog` using the same typed fields as the direct work-log endpoint; it can therefore journal and close a card in the same atomic persistence transaction. Each changed task receives one activity entry and one revision increment per transaction, even when multiple operations target it. Activity describes the net committed change, not transient intermediate operations.
 
 ## Durable history and work log
 
@@ -108,7 +138,7 @@ Each existing-task operation in `/api/ops` or an inbox envelope may include `"ex
 
 ## Activity
 
-`GET /api/activity?taskId=<full-id>&limit=50` returns `{"activity":[...],"more":false,"retention":1000}`. Omit `taskId` for board-wide activity, including deleted tasks; a deleted full ID can still filter retained history. Limit defaults to 50 and accepts 1–100. `more` indicates additional retained entries beyond the requested limit; there is no pagination cursor. An unknown ID returns an empty list.
+`GET /api/activity?taskId=<id-or-number>&limit=50` returns `{"activity":[...],"more":false,"retention":1000}`. Omit `taskId` for board-wide activity, including deleted tasks; a deleted full ID can still filter retained history. Limit defaults to 50 and accepts 1–100. `more` indicates additional retained entries beyond the requested limit; there is no pagination cursor. An unknown ID returns an empty list.
 
 Entries are newest-first and contain `taskId`, `title`, `at`, `actor`, `action` (`created`, `updated`, `deleted`), `revision`, and `changes`: an array of `{field,before,after}` strings. Individual subtask IDs identify child changes. Text previews are truncated after 160 Unicode characters with an ellipsis. The store retains at most 1,000 entries globally, atomically with task state. No history is invented for changes made before the journal existed, and old entries age out. Failed validation, revision conflicts and failed persistence create no activity. An accepted no-op request may still update timestamp/revision and create an empty-change activity entry.
 

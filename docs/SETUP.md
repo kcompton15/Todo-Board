@@ -55,9 +55,13 @@ You don't have to do anything. The rules tell the agent to:
 
 - Run `todo find` before creating a card, so it updates an existing card rather than making a duplicate.
 - Create one card per outcome, with steps as subtasks.
+- Keep one open card per Jira key or MR. Re-reviews and fix-ups on the same key become steps on
+  that card. Passing `--link KEY` makes `todo add` attach to the open card automatically;
+  `--new` forces a separate card.
+- Refer to cards and steps by number, such as `#142` and `#142.3`.
 - Pick one of four kinds:
   - `work` when you asked for a change.
-  - `review` when you asked for a review, with the MR URL in notes.
+  - `review` when you asked for a review, with the MR URL as a link.
   - `followup` for something only you can do.
   - `probe` for an investigation worth finding again.
 - Close its own reviews and probes when it hands back the result.
@@ -68,7 +72,8 @@ If you want something tracked for certain, say "track this on my board". You can
 
 ```bash
 todo ls
-todo add "Ship the quote rounding fix" --kind work --project Billing
+todo add "Ship the quote rounding fix" --kind work --project Billing --link PROJ-123
+todo find "quote rounding"
 todo help
 ```
 
