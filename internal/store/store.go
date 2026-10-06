@@ -14,10 +14,11 @@ import (
 	"time"
 )
 
-const stateVersion = 2
+const stateVersion = 3
 
 type persistedState struct {
 	Version              int             `json:"version"`
+	NextNumber           int             `json:"nextNumber"`
 	Tasks                []Task          `json:"tasks"`
 	Activity             []Activity      `json:"activity,omitempty"`
 	History              []HistoryRecord `json:"history,omitempty"`
@@ -30,7 +31,9 @@ type Store struct {
 	history              []HistoryRecord
 	completeHistorySince time.Time
 	partialLegacyHistory bool
-	needsMigrationBackup bool
+	migrateFromVersion   int
+	nextNumber           int
+	txNextNumber         int
 	mu                   sync.RWMutex
 	path                 string
 	tasks                map[string]Task
@@ -48,10 +51,11 @@ func New(dataDir string) (*Store, error) {
 	}
 
 	s := &Store{
-		path:     filepath.Join(dataDir, "tasks.json"),
-		tasks:    make(map[string]Task),
-		now:      func() time.Time { return time.Now().UTC() },
-		randomID: randomBase36,
+		path:       filepath.Join(dataDir, "tasks.json"),
+		tasks:      make(map[string]Task),
+		nextNumber: 1,
+		now:        func() time.Time { return time.Now().UTC() },
+		randomID:   randomBase36,
 	}
 	if err := s.load(); err != nil {
 		return nil, err
@@ -71,14 +75,16 @@ func (s *Store) load() error {
 	if err := json.Unmarshal(data, &state); err != nil {
 		return fmt.Errorf("parse %s: %w", s.path, err)
 	}
-	if state.Version != 1 && state.Version != stateVersion {
+	if state.Version < 1 || state.Version > stateVersion {
 		return fmt.Errorf("parse %s: unsupported state version %d", s.path, state.Version)
 	}
 	s.activity = state.Activity
 	s.history = state.History
 	s.completeHistorySince = state.CompleteHistorySince
 	s.partialLegacyHistory = state.PartialLegacyHistory || state.Version == 1
-	s.needsMigrationBackup = state.Version == 1
+	if state.Version < stateVersion {
+		s.migrateFromVersion = state.Version
+	}
 	for _, task := range state.Tasks {
 		if task.Revision == 0 {
 			task.Revision = 1
@@ -95,6 +101,11 @@ func (s *Store) load() error {
 		}
 		s.tasks[task.ID] = cloneTask(normalized)
 	}
+	next, err := assignMissingNumbers(s.tasks, state.NextNumber)
+	if err != nil {
+		return fmt.Errorf("parse %s: %w", s.path, err)
+	}
+	s.nextNumber = next
 	return nil
 }
 
@@ -107,7 +118,7 @@ func normalizeStoredTask(task Task) (Task, error) {
 		if subtask.ID == "" {
 			return Task{}, errors.New("subtask has empty id")
 		}
-		input.Subtasks = append(input.Subtasks, SubtaskInput(subtask))
+		input.Subtasks = append(input.Subtasks, SubtaskInput{ID: subtask.ID, Title: subtask.Title, Lane: subtask.Lane, Done: subtask.Done})
 	}
 	normalized, err := normalizeInput(input, task.Source)
 	if err != nil {
@@ -188,13 +199,13 @@ func (s *Store) Replace(id string, input TaskInput, options ...Mutation) (Task, 
 		} else if normalized.Lane != current.Lane {
 			order = nextOrder(tasks, normalized.Lane, id)
 		}
-		subtasks, err := s.makeSubtasks(normalized.Subtasks, normalized.Lane)
+		subtasks, nextSubtask, err := s.makeSubtasks(current.Subtasks, current.NextSubtaskNumber, normalized.Subtasks, normalized.Lane)
 		if err != nil {
 			return err
 		}
 		result = Task{
 			Links: current.Links, AgentContext: current.AgentContext, ReconcileMode: current.ReconcileMode,
-			Revision: current.Revision + 1, ID: id, Title: normalized.Title, Lane: normalized.Lane, Priority: normalized.Priority,
+			Revision: current.Revision + 1, ID: id, Number: current.Number, NextSubtaskNumber: nextSubtask, Title: normalized.Title, Lane: normalized.Lane, Priority: normalized.Priority,
 			Kind: normalized.Kind, Project: normalized.Project, Tag: normalized.Tag, Notes: normalized.Notes,
 			Source: normalized.Source, Order: order, CreatedAt: current.CreatedAt,
 			UpdatedAt: s.now(), Subtasks: subtasks,
@@ -262,7 +273,7 @@ func (s *Store) AddSubtasks(id string, inputs SubtaskInputs, options ...Mutation
 				return err
 			}
 			subtask := Subtask{
-				ID: subtaskID, Title: normalized.Title, Lane: normalized.Lane, Done: normalized.Done,
+				ID: subtaskID, Number: takeSubtaskNumber(&task), Title: normalized.Title, Lane: normalized.Lane, Done: normalized.Done,
 			}
 			task.Subtasks = append(task.Subtasks, subtask)
 			created = append(created, subtask)
@@ -474,6 +485,7 @@ func (s *Store) transactWithHistory(change func(map[string]Task, *[]HistoryRecor
 	if err := checkRevision(s.tasks, option.TaskID, option.ExpectedRevision); err != nil {
 		return err
 	}
+	s.txNextNumber = s.nextNumber
 	candidate := cloneMap(s.tasks)
 	history := append([]HistoryRecord{}, s.history...)
 	if err := change(candidate, &history); err != nil {
@@ -497,23 +509,25 @@ func (s *Store) transactWithHistory(change func(map[string]Task, *[]HistoryRecor
 	s.activity = events
 	s.history = history
 	s.completeHistorySince = completeSince
-	s.needsMigrationBackup = false
+	s.nextNumber = s.txNextNumber
+	s.migrateFromVersion = 0
 	return nil
 }
 
 func (s *Store) persist(tasks map[string]Task, events []Activity, history []HistoryRecord, completeSince time.Time, partial bool) error {
-	if s.needsMigrationBackup {
+	if s.migrateFromVersion != 0 {
+		version := fmt.Sprintf("v%d", s.migrateFromVersion)
 		stamp := s.now().UTC().Format("20060102T150405.000000000Z")
-		backup := s.path + ".v1-" + stamp + ".backup"
+		backup := s.path + "." + version + "-" + stamp + ".backup"
 		data, err := os.ReadFile(s.path)
 		if err != nil {
-			return fmt.Errorf("%w: read v1 migration backup: %v", ErrPersistence, err)
+			return fmt.Errorf("%w: read %s migration backup: %v", ErrPersistence, version, err)
 		}
 		if err := os.WriteFile(backup, data, 0o600); err != nil {
-			return fmt.Errorf("%w: write v1 migration backup: %v", ErrPersistence, err)
+			return fmt.Errorf("%w: write %s migration backup: %v", ErrPersistence, version, err)
 		}
 	}
-	state := persistedState{Version: stateVersion, Tasks: filterAndSort(tasks, Filter{}), Activity: events, History: history, CompleteHistorySince: completeSince, PartialLegacyHistory: partial}
+	state := persistedState{Version: stateVersion, NextNumber: s.txNextNumber, Tasks: filterAndSort(tasks, Filter{}), Activity: events, History: history, CompleteHistorySince: completeSince, PartialLegacyHistory: partial}
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return fmt.Errorf("%w: marshal task state: %v", ErrPersistence, err)
@@ -545,14 +559,16 @@ func (s *Store) createTask(tasks map[string]Task, input TaskInput) (Task, error)
 	if normalized.Order != nil {
 		order = *normalized.Order
 	}
-	subtasks, err := s.makeSubtasks(normalized.Subtasks, normalized.Lane)
+	subtasks, nextSubtask, err := s.makeSubtasks(nil, 0, normalized.Subtasks, normalized.Lane)
 	if err != nil {
 		return Task{}, err
 	}
+	number := s.txNextNumber
+	s.txNextNumber++
 	now := s.now()
 	task := Task{
-		Revision: 1,
-		ID:       id, Title: normalized.Title, Lane: normalized.Lane, Priority: normalized.Priority,
+		Revision: 1, Number: number, NextSubtaskNumber: nextSubtask,
+		ID: id, Title: normalized.Title, Lane: normalized.Lane, Priority: normalized.Priority,
 		Kind: normalized.Kind, Project: normalized.Project, Tag: normalized.Tag, Notes: normalized.Notes,
 		Source: normalized.Source, Order: order, CreatedAt: now, UpdatedAt: now,
 		Subtasks: subtasks,
@@ -608,7 +624,7 @@ func (s *Store) applyPatch(tasks map[string]Task, current Task, patch TaskPatch)
 	updated.Notes = normalized.Notes
 	updated.Source = normalized.Source
 	if patch.Subtasks != nil {
-		updated.Subtasks, err = s.makeSubtasks(*patch.Subtasks, updated.Lane)
+		updated.Subtasks, updated.NextSubtaskNumber, err = s.makeSubtasks(current.Subtasks, current.NextSubtaskNumber, *patch.Subtasks, updated.Lane)
 		if err != nil {
 			return Task{}, err
 		}
@@ -707,7 +723,7 @@ func (s *Store) applyOperation(tasks map[string]Task, operation Operation, sourc
 			return err
 		}
 		task.Subtasks = append(task.Subtasks, Subtask{
-			ID: id, Title: normalized.Title, Lane: normalized.Lane, Done: normalized.Done,
+			ID: id, Number: takeSubtaskNumber(&task), Title: normalized.Title, Lane: normalized.Lane, Done: normalized.Done,
 		})
 		task.UpdatedAt = s.now()
 		tasks[task.ID] = task
@@ -768,34 +784,45 @@ func (s *Store) applyOperation(tasks map[string]Task, operation Operation, sourc
 	}
 }
 
-func (s *Store) makeSubtasks(inputs SubtaskInputs, parentLane string) ([]Subtask, error) {
+// makeSubtasks builds a replacement step list. Steps that keep an existing ID keep their
+// number; new steps take numbers after every number the card has used.
+func (s *Store) makeSubtasks(existing []Subtask, nextNumber int, inputs SubtaskInputs, parentLane string) ([]Subtask, int, error) {
+	counter := Task{Subtasks: existing, NextSubtaskNumber: nextNumber}
+	numbers := make(map[string]int, len(existing))
+	for _, sub := range existing {
+		numbers[sub.ID] = sub.Number
+	}
 	result := make([]Subtask, 0, len(inputs))
 	seen := make(map[string]struct{}, len(inputs))
 	for i, input := range inputs {
 		normalized, err := normalizeSubtaskInput(input, parentLane)
 		if err != nil {
-			return nil, fmt.Errorf("subtasks[%d]: %w", i, err)
+			return nil, 0, fmt.Errorf("subtasks[%d]: %w", i, err)
 		}
 		id := input.ID
 		if id == "" {
 			var err error
 			id, err = s.newSubtaskID()
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 		}
 		if !strings.HasPrefix(id, "s") {
-			return nil, fmt.Errorf("subtask id %q is invalid", id)
+			return nil, 0, fmt.Errorf("subtask id %q is invalid", id)
 		}
 		if _, exists := seen[id]; exists {
-			return nil, fmt.Errorf("duplicate subtask id %q", id)
+			return nil, 0, fmt.Errorf("duplicate subtask id %q", id)
 		}
 		seen[id] = struct{}{}
+		number, kept := numbers[id]
+		if !kept || number == 0 {
+			number = takeSubtaskNumber(&counter)
+		}
 		result = append(result, Subtask{
-			ID: id, Title: normalized.Title, Lane: normalized.Lane, Done: normalized.Done,
+			ID: id, Number: number, Title: normalized.Title, Lane: normalized.Lane, Done: normalized.Done,
 		})
 	}
-	return result, nil
+	return result, max(counter.NextSubtaskNumber, 1), nil
 }
 
 func (s *Store) newTaskID() (string, error) {

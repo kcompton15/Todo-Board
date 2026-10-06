@@ -34,6 +34,7 @@ type Task struct {
 	ReconcileMode string    `json:"reconcileMode"`
 	Revision      uint64    `json:"revision"`
 	ID            string    `json:"id"`
+	Number        int       `json:"number"`
 	Title         string    `json:"title"`
 	Lane          string    `json:"lane"`
 	Kind          string    `json:"kind"`
@@ -46,13 +47,16 @@ type Task struct {
 	CreatedAt     time.Time `json:"createdAt"`
 	UpdatedAt     time.Time `json:"updatedAt"`
 	Subtasks      []Subtask `json:"subtasks"`
+	// NextSubtaskNumber keeps step numbers from being reused after a step is deleted.
+	NextSubtaskNumber int `json:"nextSubtaskNumber"`
 }
 
 type Subtask struct {
-	ID    string `json:"id"`
-	Title string `json:"title"`
-	Lane  string `json:"lane"`
-	Done  bool   `json:"done"`
+	ID     string `json:"id"`
+	Number int    `json:"number"`
+	Title  string `json:"title"`
+	Lane   string `json:"lane"`
+	Done   bool   `json:"done"`
 }
 
 type SubtaskInput struct {

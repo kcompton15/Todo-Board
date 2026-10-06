@@ -43,7 +43,7 @@ func TestCLITrustWorkflow(t *testing.T) {
 		}
 		return string(data)
 	}
-	if got := run(false, "context"); !strings.Contains(got, "tlegacy") || !strings.Contains(got, "Open step") {
+	if got := run(false, "context"); !strings.Contains(got, "#1  Hidden outcome") || !strings.Contains(got, "#1.1  Open step") {
 		t.Fatalf("hidden context: %s", got)
 	}
 	createdOutput := run(false, "add", "Investigate kind", "--kind", "review", "--lane", "doing", "--project", "Internal Tools")
@@ -93,7 +93,7 @@ func TestCLITrustWorkflow(t *testing.T) {
 	if task.Lane != "done" || task.Notes != "Blocked: Waiting for review" || task.Revision != 5 {
 		t.Fatalf("CLI state: %#v", task)
 	}
-	if got := run(false, "context"); strings.Contains(got, "tlegacy") {
+	if got := run(false, "context"); strings.Contains(got, "Hidden outcome") {
 		t.Fatal("finished task still in active context")
 	}
 }
@@ -292,4 +292,83 @@ func runCLIContext(t *testing.T, tasks []store.Task) string {
 		t.Fatalf("todo context: %v\n%s", err, data)
 	}
 	return string(data)
+}
+
+func TestCLIResolvesAndPrintsNumbers(t *testing.T) {
+	for _, tool := range []string{"bash", "curl", "jq"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("CLI integration requires %s", tool)
+		}
+	}
+	s, err := store.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := httptest.NewServer(httpapi.New(s, httpapi.NewHub(), nil, nil).Handler())
+	defer api.Close()
+	run := func(wantError bool, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("bash", append([]string{"./todo"}, args...)...)
+		cmd.Env = append(os.Environ(), "TODO_URL="+api.URL, "TODO_ACTOR=codex")
+		data, err := cmd.CombinedOutput()
+		if (err != nil) != wantError {
+			t.Fatalf("todo %v: %v\n%s", args, err, data)
+		}
+		return string(data)
+	}
+	expect := func(got string, want ...string) {
+		t.Helper()
+		for _, fragment := range want {
+			if !strings.Contains(got, fragment) {
+				t.Fatalf("output does not contain %q:\n%s", fragment, got)
+			}
+		}
+	}
+
+	expect(run(false, "add", "First card", "--lane", "today"), "created #1 [today] First card")
+	expect(run(false, "add", "Second card", "--lane", "today", "--sub", "alpha", "--sub", "beta"), "created #2 [today] Second card")
+	second, _, err := s.Resolve("2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect(run(false, "ls"), "#       LANE", "#1      today", "#2      today")
+	for _, ref := range []string{"1", "#1"} {
+		expect(run(false, "show", ref), "#1  t", "First card")
+	}
+	expect(run(false, "show", "2"), "#2  "+second.ID, "#2.1  "+second.Subtasks[0].ID+"  alpha", "#2.2  "+second.Subtasks[1].ID+"  beta")
+	expect(run(false, "sub", "2", "gamma"), "created #2.3 [today] gamma")
+	expect(run(false, "check", "2", "2"), "updated #2.2  beta")
+	expect(run(false, "check", "#2", "#2.3"), "updated #2.3  gamma")
+	expect(run(false, "uncheck", "2", second.Subtasks[1].ID[:4]), "updated #2.2  beta")
+	expect(run(false, "submove", "2", "1", "doing"), "moved #2.1 to doing")
+	expect(run(false, "move", "#2", "doing"), "moved #2 to doing")
+	expect(run(false, "context"), "- [doing] #2  Second card", "    - [ ] [doing] #2.1  alpha")
+	expect(run(false, "log", "2", "progress", "numbered"), "logged progress on #2")
+	expect(run(true, "check", "2", "#1.1"), "not on card #2")
+	expect(run(true, "check", "2", "9"), "no step 9 on card #2")
+	expect(run(true, "show", "99"), "no task #99")
+	expect(run(true, "show", "2.1"), "is a step")
+
+	task, err := s.Get(second.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Lane != "doing" || task.Subtasks[0].Lane != "doing" || task.Subtasks[1].Done || !task.Subtasks[2].Done {
+		t.Fatalf("CLI state: %#v", task)
+	}
+	first, _, err := s.Resolve("1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect(run(false, "rm", "1"), "deleted #1 ("+first.ID+")")
+	expect(run(false, "add", "Third card"), "created #3 [backlog] Third card")
+	var listed struct {
+		Tasks []store.Task `json:"tasks"`
+	}
+	if err := json.Unmarshal([]byte(run(false, "ls", "--json")), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Tasks) != 2 || listed.Tasks[0].ID == "" || listed.Tasks[0].Number == 0 {
+		t.Fatalf("ls --json lost IDs or numbers: %#v", listed.Tasks)
+	}
 }

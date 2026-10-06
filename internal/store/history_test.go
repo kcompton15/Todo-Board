@@ -82,8 +82,8 @@ func TestVersionOneMigrationBacksUpBeforeFirstWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `"version": 2`) {
-		t.Fatalf("migration did not persist v2: %s", data)
+	if !strings.Contains(string(data), `"version": 3`) {
+		t.Fatalf("migration did not persist v3: %s", data)
 	}
 }
 

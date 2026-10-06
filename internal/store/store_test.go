@@ -410,8 +410,8 @@ func TestVersionTwoTaskWithoutKindLoadsAndPersistsAsWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(persisted), `"version": 2`) || !strings.Contains(string(persisted), `"kind": "work"`) {
-		t.Fatalf("legacy task did not persist as v2 work: %s", persisted)
+	if !strings.Contains(string(persisted), `"version": 3`) || !strings.Contains(string(persisted), `"kind": "work"`) {
+		t.Fatalf("legacy task did not persist as v3 work: %s", persisted)
 	}
 }
 
@@ -511,7 +511,7 @@ func TestPersistenceIsCanonicalAndPrettyPrinted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "\n  \"version\": 2") {
+	if !strings.Contains(string(data), "\n  \"version\": 3") {
 		t.Fatalf("state is not indented: %s", data)
 	}
 	if strings.Contains(string(data), `"subtasks": null`) {

@@ -385,7 +385,7 @@ func normalizeID(id json.RawMessage) json.RawMessage {
 
 func toolDefinitions() []toolDefinition {
 	definitions := []toolDefinition{
-		{Name: "get_activity", Title: "Read workboard activity", Description: "Read the latest 50 retained task changes with self-reported client attribution. Omit id for board activity, including deleted tasks. Use a full task ID to filter. History before the upgrade is unavailable.", InputSchema: objectSchema(map[string]any{"id": stringProperty("Optional full task ID")}, nil), Annotations: annotations(true, false, true)},
+		{Name: "get_activity", Title: "Read workboard activity", Description: "Read the latest 50 retained task changes with self-reported client attribution. Omit id for board activity, including deleted tasks. Use a task ID or card number to filter. History before the upgrade is unavailable.", InputSchema: objectSchema(map[string]any{"id": stringProperty("Optional task ID or card number")}, nil), Annotations: annotations(true, false, true)},
 		{
 			Name: "list_tasks", Title: "Find workboard tasks",
 			Description: "Search the Todo Board before create_task to avoid duplicate cards. A plain answer creates no card. Filter by kind: work for a requested change, review for a requested review, followup for a human action, or probe for an investigated question with reusable artifacts. Filters are combined; with no filters, every task is returned.",
@@ -401,9 +401,9 @@ func toolDefinitions() []toolDefinition {
 		},
 		{
 			Name: "get_task", Title: "Get one workboard task",
-			Description: "Read one task and all of its subtasks using its full task ID.",
+			Description: "Read one task and all of its subtasks using its task ID or card number.",
 			InputSchema: objectSchema(map[string]any{
-				"id": stringProperty("Full task ID"),
+				"id": stringProperty("Task ID or card number, such as 142 or #142"),
 			}, []string{"id"}),
 			Annotations: annotations(true, false, true),
 		},
@@ -429,7 +429,7 @@ func toolDefinitions() []toolDefinition {
 			Name: "update_task", Title: "Update a workboard task",
 			Description: "Change task fields, kind, or lane. Close the session's own review and probe cards when their deliverable is returned. Close work only when the human requested that work and it is verified; otherwise leave it open and record a next_step saying it is ready to close through a work-log-capable client. Never move followup. These lifecycle updates are authorized side effects; do not ask separately. Use notes for blocker reasons.",
 			InputSchema: objectSchema(map[string]any{
-				"id":               stringProperty("Full task ID"),
+				"id":               stringProperty("Task ID or card number, such as 142 or #142"),
 				"expectedRevision": map[string]any{"type": "integer", "minimum": 1, "description": "Revision from get_task. Use it to prevent overwriting another session; on conflict read again and reconcile."},
 				"title":            stringProperty("Replacement title"),
 				"lane":             enumProperty("New lane", store.LaneOrder),
@@ -445,7 +445,7 @@ func toolDefinitions() []toolDefinition {
 			Name: "add_subtask", Title: "Add a workboard subtask",
 			Description: "Add a concrete step to an existing task. Prefer this over creating a duplicate card when the work belongs to the same outcome.",
 			InputSchema: objectSchema(map[string]any{
-				"id":               stringProperty("Full task ID"),
+				"id":               stringProperty("Task ID or card number, such as 142 or #142"),
 				"expectedRevision": map[string]any{"type": "integer", "minimum": 1, "description": "Parent task revision from get_task; conflict means read again before retrying."},
 				"title":            stringProperty("Required subtask title"),
 				"lane":             enumProperty("Initial subtask lane; defaults to the parent task lane", store.LaneOrder),
@@ -456,9 +456,9 @@ func toolDefinitions() []toolDefinition {
 			Name: "update_subtask", Title: "Update a workboard subtask",
 			Description: "Rename a subtask or move its lane independently from its parent as progress occurs. The done field is a compatibility shortcut for moving to or from Done.",
 			InputSchema: objectSchema(map[string]any{
-				"id":               stringProperty("Full task ID"),
+				"id":               stringProperty("Task ID or card number, such as 142 or #142"),
 				"expectedRevision": map[string]any{"type": "integer", "minimum": 1, "description": "Parent task revision from get_task; conflict means read again before retrying."},
-				"subtaskId":        stringProperty("Full subtask ID"),
+				"subtaskId":        stringProperty("Subtask ID or its step number on this card, such as 3"),
 				"title":            stringProperty("Replacement subtask title"),
 				"lane":             enumProperty("Independent subtask lane", store.LaneOrder),
 				"done":             map[string]any{"type": "boolean", "description": "Whether the subtask is complete"},

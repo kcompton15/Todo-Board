@@ -652,6 +652,10 @@
       .chip.source {
         border-style: dashed;
       }
+      .chip.num {
+        padding-left: 0;
+        border-color: transparent;
+      }
       .progress {
         height: 3px;
         margin: 0 10px 8px 43px;
@@ -792,6 +796,12 @@
       .subtask-row.done .subtask-title {
         color: var(--muted);
         text-decoration: line-through;
+      }
+      .sub-num {
+        display: inline-block;
+        margin-right: 5px;
+        color: var(--muted);
+        font: 10px var(--mono);
       }
       .sub-controls {
         display: flex;
@@ -2092,6 +2102,7 @@
       }
       function visibleTasks() {
         const query = $("search").value.trim().toLowerCase(),
+          numberQuery = query.match(/^#?(\d+)(?:\.\d+)?$/),
           project = $("projectFilter").value;
         return tasks.filter((task) => {
           const kind = task.kind || "work",
@@ -2110,6 +2121,7 @@
                 ? !task.project
                 : task.project === project)) &&
             (!query ||
+              (numberQuery && task.number === Number(numberQuery[1])) ||
               [
                 task.title,
                 task.notes,
@@ -2565,7 +2577,11 @@
           esc(task.title)
         }"><span>›</span></button><div class="card-copy"><button class="card-title" type="button" data-toggle="${task.id}" aria-expanded="${isExpanded}" aria-controls="details-${task.id}">${
           esc(task.title)
-        }</button><div class="meta"><span class="chip">P${task.priority}</span>${
+        }</button><div class="meta">${
+          task.number
+            ? `<span class="chip num" title="Card #${task.number}">#${task.number}</span>`
+            : ""
+        }<span class="chip">P${task.priority}</span>${
           task.kind && task.kind !== "work"
             ? `<span class="chip kind">${esc(task.kind)}</span>`
             : ""
@@ -2640,8 +2656,10 @@
         } aria-label="Mark ${
           esc(subtask.title)
         } complete"><span class="subtask-title">${
-          esc(subtask.title)
-        }<span class="meta">${
+          subtask.number && task.number
+            ? `<span class="sub-num" title="Step #${task.number}.${subtask.number}">.${subtask.number}</span>`
+            : ""
+        }${esc(subtask.title)}<span class="meta">${
           linkChips(task, subtask.id)
         }</span></span><span class="sub-controls"><button class="mini sub-move" type="button" data-sub-lane="-1" data-parent-id="${task.id}" data-subtask-id="${subtask.id}" ${
           index === 0 ? "disabled" : ""

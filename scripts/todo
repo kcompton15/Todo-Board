@@ -35,8 +35,22 @@ api() {
 
 encode() { jq -rn --arg value "$1" '$value|@uri'; }
 
+# jq helpers: card and step handles fall back to IDs for servers without numbers.
+JQ_REFS='def card_ref: if (.number // 0) > 0 then "#\(.number)" else .id end;
+  def step_ref($card): if (.number // 0) > 0 and ($card // 0) > 0 then "#\($card).\(.number)" else .id end;'
+
 resolve_task() {
-  local prefix="$1" matches count
+  local prefix="$1" matches count number
+  if [[ "$prefix" =~ ^#?([0-9]{1,9})$ ]]; then
+    number=$((10#${BASH_REMATCH[1]}))
+    matches=$(api GET /api/tasks | jq -r --argjson number "$number" '.tasks[] | select(.number == $number) | .id')
+    [[ -n "$matches" ]] || die "no task #$number"
+    printf '%s' "$matches"
+    return
+  fi
+  if [[ "$prefix" =~ ^#?[0-9]+\.[0-9]+$ ]]; then
+    die "'$prefix' is a step; pass the card and step separately, for example: todo check 142 3"
+  fi
   matches=$(api GET /api/tasks | jq -r --arg prefix "$prefix" '.tasks[].id | select(startswith($prefix))')
   count=$(printf '%s\n' "$matches" | sed '/^$/d' | wc -l | tr -d ' ')
   case "$count" in
@@ -47,7 +61,22 @@ resolve_task() {
 }
 
 resolve_subtask() {
-  local task_id="$1" prefix="$2" matches count
+  local task_id="$1" prefix="$2" matches count card="" step="" task
+  if [[ "$prefix" =~ ^#?([0-9]{1,9})\.([0-9]{1,9})$ ]]; then
+    card=$((10#${BASH_REMATCH[1]})); step=$((10#${BASH_REMATCH[2]}))
+  elif [[ "$prefix" =~ ^#?([0-9]{1,9})$ ]]; then
+    step=$((10#${BASH_REMATCH[1]}))
+  fi
+  if [[ -n "$step" ]]; then
+    task=$(api GET "/api/tasks/$task_id")
+    if [[ -n "$card" && "$(printf '%s' "$task" | jq -r '.number // 0')" != "$card" ]]; then
+      die "step '$prefix' is not on card $(printf '%s' "$task" | jq -r "$JQ_REFS card_ref")"
+    fi
+    matches=$(printf '%s' "$task" | jq -r --argjson step "$step" '.subtasks[] | select(.number == $step) | .id')
+    [[ -n "$matches" ]] || die "no step $step on card $(printf '%s' "$task" | jq -r "$JQ_REFS card_ref")"
+    printf '%s' "$matches"
+    return
+  fi
   matches=$(api GET "/api/tasks/$task_id" | jq -r --arg prefix "$prefix" '.subtasks[].id | select(startswith($prefix))')
   count=$(printf '%s\n' "$matches" | sed '/^$/d' | wc -l | tr -d ' ')
   case "$count" in
@@ -57,11 +86,13 @@ resolve_subtask() {
   esac
 }
 
+card_ref() { api GET "/api/tasks/$1" | jq -r "$JQ_REFS card_ref"; }
+
 print_table() {
-  jq -r '
+  jq -r "$JQ_REFS"'
     if (.tasks|length)==0 then "No tasks found."
-    else (["ID","LANE","P","KIND","PROJECT","TITLE"], (.tasks[] | [.id[0:12],.lane,(.priority|tostring),(.kind//"work"),(.project//""),.title]))
-    | @tsv end' | awk -F '\t' 'BEGIN{OFS="  "} {printf "%-12s  %-8s  %-2s  %-8s  %-18s  %s\n",$1,$2,$3,$4,$5,$6}'
+    else (["#","LANE","P","KIND","PROJECT","TITLE"], (.tasks[] | [(if (.number // 0) > 0 then card_ref else .id[0:12] end),.lane,(.priority|tostring),(.kind//"work"),(.project//""),.title]))
+    | @tsv end' | awk -F '\t' 'BEGIN{OFS="  "} {printf "%-6s  %-8s  %-2s  %-8s  %-18s  %s\n",$1,$2,$3,$4,$5,$6}'
 }
 
 usage() {
@@ -72,26 +103,29 @@ todo find "text" [--json]
 todo add "title" [--lane L] [--kind work|followup|review|probe]
          [--prio 1|2|3] [--project P] [--tag T]
          [--source S] [--notes TEXT] [--sub TEXT]...
-todo show <task-id-prefix> [--json]
-todo move <task-id-prefix> <backlog|today|doing|blocked|done>
-todo kind <task-id-prefix> <work|followup|review|probe>
+todo show <card> [--json]
+todo move <card> <backlog|today|doing|blocked|done>
+todo kind <card> <work|followup|review|probe>
 todo link <card> <key|url> [--sub <prefix>] [--role required|reference]
 todo unlink <card> <link-prefix>
 todo reconcile <card> automatic|manual
 todo memo <card> <text>
-todo start <task-id-prefix>
-todo done <task-id-prefix>
-todo block <task-id-prefix> [reason]
-todo sub <task-id-prefix> "title" [--lane L]
-todo submove <task-id-prefix> <subtask-id-prefix> <lane>
-todo check|uncheck <task-id-prefix> <subtask-id-prefix>
-todo rm <task-id-prefix>
+todo start <card>
+todo done <card>
+todo block <card> [reason]
+todo sub <card> "title" [--lane L]
+todo submove <card> <step> <lane>
+todo check|uncheck <card> <step>
+todo rm <card>
 todo import [file]
 todo ops [file]
 todo context
-todo history [task-id-prefix] [--json]
-todo log <task-id-prefix> <progress|decision|blocker|blocker_resolved|next_step|review_delivered> "text" [--sub <prefix>]
+todo history [card] [--json]
+todo log <card> <progress|decision|blocker|blocker_resolved|next_step|review_delivered> "text" [--sub <step>]
 todo add also accepts [--link KEY_OR_URL]... [--agent-context TEXT]
+
+<card> is a number (142 or '#142') or a task ID prefix.
+<step> is a step number (3 or '#142.3') or a subtask ID prefix.
 
 Environment: TODO_URL (default http://127.0.0.1:7337), TODO_ACTOR (default cli)
 EOF
@@ -159,7 +193,7 @@ case "$command_name" in
     [[ -n "${TODO_ACTOR:-}" ]] || TODO_ACTOR="$source"
     body=$(jq -n --arg title "$title" --arg lane "$lane" --arg kind "$kind" --argjson priority "$priority" --arg project "$project" --arg tag "$tag" --arg notes "$notes" --arg source "$source" --argjson subtasks "$sub_json" '{title:$title,lane:$lane,kind:$kind,priority:$priority,project:$project,tag:$tag,notes:$notes,source:$source,subtasks:$subtasks}')
     body=$(printf '%s' "$body" | jq --argjson links "$links" --arg memo "$memo" '.+{links:$links,agentContext:$memo}')
-    api POST /api/tasks "$body" | jq -r '.tasks[0] | "created \(.id) [\(.lane)] \(.title)"'
+    api POST /api/tasks "$body" | jq -r "$JQ_REFS"'.tasks[0] | "created \(card_ref) [\(.lane)] \(.title)"'
     ;;
   show)
     [[ $# -ge 1 ]] || die "show requires a task id"
@@ -168,7 +202,7 @@ case "$command_name" in
     [[ $# -eq 0 ]] || die "unexpected show argument '$1'"
     result=$(api GET "/api/tasks/$id")
     if $json; then printf '%s\n' "$result" | jq .; else
-      printf '%s\n' "$result" | jq -r '"\(.id)  [\(.lane)] P\(.priority)  \(.title)\nkind: \(.kind // "work")  project: \(.project // "")  tag: \(.tag // "")  source: \(.source)\nnotes: \(.notes // "")\nsubtasks:\n" + ((.subtasks // []) | map("  [" + (if .done then "x" else " " end) + "] [\(.lane)] \(.id)  \(.title)") | join("\n"))'
+      printf '%s\n' "$result" | jq -r "$JQ_REFS"'.number as $card | "\(card_ref)  \(.id)  [\(.lane)] P\(.priority)  \(.title)\nkind: \(.kind // "work")  project: \(.project // "")  tag: \(.tag // "")  source: \(.source)\nnotes: \(.notes // "")\nsubtasks:\n" + ((.subtasks // []) | map("  [" + (if .done then "x" else " " end) + "] [\(.lane)] \(step_ref($card))  \(.id)  \(.title)") | join("\n"))'
       printf '%s\n' "$result" | jq -r '"reconciliation: \(.reconcileMode // "automatic")\nagent memo: \(.agentContext // "")", (.links[]? | "link \(.id): \(.ref) [\(.role)] scope=\(.subtaskId // "card") state=\(.state // "unknown") \(.url)")'
     fi
     ;;
@@ -177,7 +211,7 @@ case "$command_name" in
     id=$(resolve_task "$1")
     if [[ "$command_name" == "move" ]]; then [[ $# -eq 2 ]] || die "move requires a lane"; lane="$2"; else [[ $# -eq 1 ]] || die "unexpected argument"; [[ "$command_name" == "start" ]] && lane="doing" || lane="done"; fi
     body=$(jq -n --arg lane "$lane" '{lane:$lane}')
-    api PATCH "/api/tasks/$id" "$body" | jq -r '"moved \(.id) to \(.lane)"'
+    api PATCH "/api/tasks/$id" "$body" | jq -r "$JQ_REFS"'"moved \(card_ref) to \(.lane)"'
     ;;
   link)
     [[ $# -ge 2 ]] || die "link requires card and key or URL"
@@ -206,7 +240,7 @@ case "$command_name" in
     id=$(resolve_task "$1"); current=$(api GET "/api/tasks/$id"); field=agentContext
     [[ "$command_name" != reconcile ]] || field=reconcileMode
     body=$(jq -n --arg field "$field" --arg value "$2" '{($field):$value}')
-    api PATCH "/api/tasks/$id" "$body" application/json "$(printf '%s' "$current" | jq -r .revision)" | jq -r '"updated \(.id)"'
+    api PATCH "/api/tasks/$id" "$body" application/json "$(printf '%s' "$current" | jq -r .revision)" | jq -r "$JQ_REFS"'"updated \(card_ref)"'
     ;;
   kind)
     [[ $# -eq 2 ]] || die "kind requires task id and kind"
@@ -214,14 +248,14 @@ case "$command_name" in
     id=$(resolve_task "$1"); kind="$2"
     current=$(api GET "/api/tasks/$id")
     body=$(jq -n --arg kind "$kind" '{kind:$kind}')
-    api PATCH "/api/tasks/$id" "$body" application/json "$(printf '%s' "$current" | jq -r .revision)" | jq -r '"kind \(.id) -> \(.kind)"'
+    api PATCH "/api/tasks/$id" "$body" application/json "$(printf '%s' "$current" | jq -r .revision)" | jq -r "$JQ_REFS"'"kind \(card_ref) -> \(.kind)"'
     ;;
   block)
     [[ $# -ge 1 && $# -le 2 ]] || die "block requires a task id and optional reason"
     id=$(resolve_task "$1"); reason="${2:-}"
     current=$(api GET "/api/tasks/$id")
     body=$(printf '%s' "$current" | jq --arg reason "$reason" '{lane:"blocked",notes:(if $reason=="" then .notes else ((if .notes=="" then "" else .notes+"\n\n" end)+"Blocked: "+$reason) end)}')
-    api PATCH "/api/tasks/$id" "$body" application/json "$(printf '%s' "$current" | jq -r .revision)" | jq -r '"blocked \(.id)"'
+    api PATCH "/api/tasks/$id" "$body" application/json "$(printf '%s' "$current" | jq -r .revision)" | jq -r "$JQ_REFS"'"blocked \(card_ref)"'
     ;;
   sub)
     [[ $# -ge 2 ]] || die "sub requires a task id and title"
@@ -233,23 +267,26 @@ case "$command_name" in
       esac
     done
     body=$(jq -n --arg title "$title" --arg lane "$lane" '{title:$title} + (if $lane=="" then {} else {lane:$lane} end)')
-    api POST "/api/tasks/$id/subtasks" "$body" | jq -r '"created \(.id) [\(.lane)] \(.title)"'
+    card=$(api GET "/api/tasks/$id" | jq '.number // 0')
+    api POST "/api/tasks/$id/subtasks" "$body" | jq -r --argjson card "$card" "$JQ_REFS"'"created \(step_ref($card)) [\(.lane)] \(.title)"'
     ;;
   submove)
     [[ $# -eq 3 ]] || die "submove requires task id, subtask id, and lane"
     id=$(resolve_task "$1"); subtask_id=$(resolve_subtask "$id" "$2")
     body=$(jq -n --arg lane "$3" '{lane:$lane}')
-    api PATCH "/api/tasks/$id/subtasks/$subtask_id" "$body" | jq -r '"moved \(.id) to \(.lane)"'
+    card=$(api GET "/api/tasks/$id" | jq '.number // 0')
+    api PATCH "/api/tasks/$id/subtasks/$subtask_id" "$body" | jq -r --argjson card "$card" "$JQ_REFS"'"moved \(step_ref($card)) to \(.lane)"'
     ;;
   check|uncheck)
     [[ $# -eq 2 ]] || die "$command_name requires task and subtask ids"
     id=$(resolve_task "$1"); subtask_id=$(resolve_subtask "$id" "$2")
     [[ "$command_name" == "check" ]] && done=true || done=false
-    api PATCH "/api/tasks/$id/subtasks/$subtask_id" "{\"done\":$done}" | jq -r '"updated \(.id)  \(.title)"'
+    card=$(api GET "/api/tasks/$id" | jq '.number // 0')
+    api PATCH "/api/tasks/$id/subtasks/$subtask_id" "{\"done\":$done}" | jq -r --argjson card "$card" "$JQ_REFS"'"updated \(step_ref($card))  \(.title)"'
     ;;
   rm)
     [[ $# -eq 1 ]] || die "rm requires a task id"
-    id=$(resolve_task "$1"); api DELETE "/api/tasks/$id" >/dev/null; printf 'deleted %s\n' "$id"
+    id=$(resolve_task "$1"); ref=$(card_ref "$id"); api DELETE "/api/tasks/$id" >/dev/null; printf 'deleted %s (%s)\n' "$ref" "$id"
     ;;
   import)
     [[ $# -le 1 ]] || die "import accepts at most one file"
@@ -283,10 +320,10 @@ case "$command_name" in
     case "$kind" in progress|decision|blocker|blocker_resolved|next_step|review_delivered) ;; *) die "invalid work-log kind '$kind'" ;; esac
     current=$(api GET "/api/tasks/$id")
     body=$(jq -n --arg kind "$kind" --arg text "$text" --arg sub "$sub" '{kind:$kind,text:$text,subtaskId:$sub}')
-    api POST "/api/tasks/$id/work-log" "$body" application/json "$(printf '%s' "$current" | jq -r .revision)" | jq -r '"logged \(.kind) on \(.taskId)"'
+    api POST "/api/tasks/$id/work-log" "$body" application/json "$(printf '%s' "$current" | jq -r .revision)" | jq -r --arg ref "$(printf '%s' "$current" | jq -r "$JQ_REFS card_ref")" '"logged \(.kind) on \($ref)"'
     ;;
   context)
-    api GET /api/tasks | jq -r --argjson budget 1900 '
+    api GET /api/tasks | jq -r --argjson budget 1900 "$JQ_REFS"'
       def is_active:
         ((.lane != "done" and .lane != "backlog")
           or (.lane == "done" and any(.subtasks[]?; .lane != "done"))
@@ -296,11 +333,11 @@ case "$command_name" in
         [.subtasks[]? | select(.lane != "done")] as $open |
         ("- [\($task.lane)] "
           + (if ($task.kind // "work") == "work" then "" else "[\($task.kind)] " end)
-          + "\($task.id)  \($task.title)"
+          + "\($task | card_ref)  \($task.title)"
           + (if ($task.project // "") != "" then "  {\($task.project)}" else "" end))
         + (if ($open | length) == 0 then ""
           else "\n" + (
-            ([$open[0:5][] | "    - [ ] [\(.lane)] \(.id)  \(.title)"])
+            ([$open[0:5][] | "    - [ ] [\(.lane)] \(step_ref($task.number))  \(.title)"])
             + (if ($open | length) > 5
               then ["    - +\(($open | length) - 5) more open steps"]
               else []

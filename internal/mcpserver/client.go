@@ -181,11 +181,12 @@ func (c *BoardClient) ListTasks(ctx context.Context, input ListTasksInput) ([]Ta
 
 // GetTask returns one task by full ID.
 func (c *BoardClient) GetTask(ctx context.Context, input GetTaskInput) (Task, error) {
-	if err := validateID("task id", input.ID); err != nil {
+	id, err := boardRef("task id", input.ID)
+	if err != nil {
 		return Task{}, err
 	}
 	var task Task
-	err := c.do(ctx, http.MethodGet, "/api/tasks/"+input.ID, nil, nil, &task)
+	err = c.do(ctx, http.MethodGet, "/api/tasks/"+id, nil, nil, &task)
 	return task, err
 }
 
@@ -206,14 +207,15 @@ func (c *BoardClient) CreateTask(ctx context.Context, input CreateTaskInput) (Ta
 
 // UpdateTask changes editable fields on an existing task.
 func (c *BoardClient) UpdateTask(ctx context.Context, input UpdateTaskInput) (Task, error) {
-	if err := validateID("task id", input.ID); err != nil {
+	id, err := boardRef("task id", input.ID)
+	if err != nil {
 		return Task{}, err
 	}
 	if !input.hasChanges() {
 		return Task{}, errors.New("update_task requires at least one field to change")
 	}
 	var task Task
-	err := c.do(ctx, http.MethodPatch, "/api/tasks/"+input.ID, nil, input, &task, input.ExpectedRevision)
+	err = c.do(ctx, http.MethodPatch, "/api/tasks/"+id, nil, input, &task, input.ExpectedRevision)
 	return task, err
 }
 
@@ -227,7 +229,8 @@ func (input UpdateTaskInput) hasChanges() bool {
 
 // AddSubtask appends one step to an existing task.
 func (c *BoardClient) AddSubtask(ctx context.Context, input AddSubtaskInput) (Subtask, error) {
-	if err := validateID("task id", input.ID); err != nil {
+	id, err := boardRef("task id", input.ID)
+	if err != nil {
 		return Subtask{}, err
 	}
 	body := struct {
@@ -235,37 +238,65 @@ func (c *BoardClient) AddSubtask(ctx context.Context, input AddSubtaskInput) (Su
 		Lane  string `json:"lane,omitempty"`
 	}{Title: input.Title, Lane: input.Lane}
 	var subtask Subtask
-	err := c.do(ctx, http.MethodPost, "/api/tasks/"+input.ID+"/subtasks", nil, body, &subtask, input.ExpectedRevision)
+	err = c.do(ctx, http.MethodPost, "/api/tasks/"+id+"/subtasks", nil, body, &subtask, input.ExpectedRevision)
 	return subtask, err
 }
 
 // UpdateSubtask changes a subtask title, completion state, or both.
 func (c *BoardClient) UpdateSubtask(ctx context.Context, input UpdateSubtaskInput) (Subtask, error) {
-	if err := validateID("task id", input.ID); err != nil {
+	id, err := boardRef("task id", input.ID)
+	if err != nil {
 		return Subtask{}, err
 	}
-	if err := validateID("subtask id", input.SubtaskID); err != nil {
+	subtaskID, err := boardRef("subtask id", input.SubtaskID)
+	if err != nil {
 		return Subtask{}, err
 	}
 	if input.Title == nil && input.Lane == nil && input.Done == nil {
 		return Subtask{}, errors.New("update_subtask requires at least one field to change")
 	}
 	var subtask Subtask
-	path := "/api/tasks/" + input.ID + "/subtasks/" + input.SubtaskID
-	err := c.do(ctx, http.MethodPatch, path, nil, input, &subtask, input.ExpectedRevision)
+	path := "/api/tasks/" + id + "/subtasks/" + subtaskID
+	err = c.do(ctx, http.MethodPatch, path, nil, input, &subtask, input.ExpectedRevision)
 	return subtask, err
 }
 
 // GetActivity returns bounded, newest-first activity for one task or the whole board.
 func (c *BoardClient) GetActivity(ctx context.Context, input GetTaskInput) (map[string]any, error) {
-	if input.ID != "" {
-		if err := validateID("task id", input.ID); err != nil {
+	id := input.ID
+	if id != "" {
+		var err error
+		id, err = boardRef("task id", id)
+		if err != nil {
 			return nil, err
 		}
 	}
 	var response map[string]any
-	err := c.do(ctx, http.MethodGet, "/api/activity", url.Values{"taskId": {input.ID}, "limit": {"50"}}, nil, &response)
+	err := c.do(ctx, http.MethodGet, "/api/activity", url.Values{"taskId": {id}, "limit": {"50"}}, nil, &response)
 	return response, err
+}
+
+// boardRef accepts a full ID or a card or step number, dropping the optional # so the
+// value is safe in a URL path.
+func boardRef(field, value string) (string, error) {
+	trimmed := strings.TrimPrefix(value, "#")
+	card, step, hasStep := strings.Cut(trimmed, ".")
+	if isDigits(card) && (!hasStep || isDigits(step)) {
+		return trimmed, nil
+	}
+	return value, validateID(field, value)
+}
+
+func isDigits(value string) bool {
+	if value == "" || len(value) > 9 {
+		return false
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func validateID(field, value string) error {

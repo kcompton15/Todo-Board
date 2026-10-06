@@ -61,7 +61,7 @@ func (s *Server) listActivity(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = value
 	}
-	events := s.store.Activity(r.URL.Query().Get("taskId"))
+	events := s.store.Activity(s.resolveTaskID(r.URL.Query().Get("taskId")))
 	more := len(events) > limit
 	if more {
 		events = events[:limit]
@@ -70,7 +70,7 @@ func (s *Server) listActivity(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listHistory(w http.ResponseWriter, r *http.Request) {
-	s.writeHistory(w, r, r.URL.Query().Get("taskId"))
+	s.writeHistory(w, r, s.resolveTaskID(r.URL.Query().Get("taskId")))
 }
 
 func (s *Server) listTaskHistory(w http.ResponseWriter, r *http.Request) {

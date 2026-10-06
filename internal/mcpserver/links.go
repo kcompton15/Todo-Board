@@ -27,30 +27,33 @@ type ReviewDeliveredInput struct {
 
 func (c *BoardClient) LinkTask(ctx context.Context, input LinkTaskInput) (store.Link, error) {
 	var result store.Link
-	if err := validateID("task id", input.ID); err != nil {
+	id, err := boardRef("task id", input.ID)
+	if err != nil {
 		return result, err
 	}
-	err := c.do(ctx, http.MethodPost, "/api/tasks/"+input.ID+"/links", nil, input.Link, &result, input.ExpectedRevision)
+	err = c.do(ctx, http.MethodPost, "/api/tasks/"+id+"/links", nil, input.Link, &result, input.ExpectedRevision)
 	return result, err
 }
 func (c *BoardClient) UnlinkTask(ctx context.Context, input UnlinkTaskInput) (map[string]any, error) {
-	if err := validateID("task id", input.ID); err != nil {
+	id, err := boardRef("task id", input.ID)
+	if err != nil {
 		return nil, err
 	}
 	if err := validateID("link id", input.LinkID); err != nil {
 		return nil, err
 	}
 	var result map[string]any
-	err := c.do(ctx, http.MethodDelete, "/api/tasks/"+input.ID+"/links/"+input.LinkID, nil, nil, &result, input.ExpectedRevision)
+	err = c.do(ctx, http.MethodDelete, "/api/tasks/"+id+"/links/"+input.LinkID, nil, nil, &result, input.ExpectedRevision)
 	return result, err
 }
 func (c *BoardClient) LogReviewDelivered(ctx context.Context, input ReviewDeliveredInput) (store.WorkLogEntry, error) {
 	var result store.WorkLogEntry
-	if err := validateID("task id", input.ID); err != nil {
+	id, err := boardRef("task id", input.ID)
+	if err != nil {
 		return result, err
 	}
 	body := store.WorkLogInput{Kind: store.WorkLogReviewDelivered, Text: input.Text, SubtaskID: input.SubtaskID}
-	err := c.do(ctx, http.MethodPost, "/api/tasks/"+input.ID+"/work-log", nil, body, &result, input.ExpectedRevision)
+	err = c.do(ctx, http.MethodPost, "/api/tasks/"+id+"/work-log", nil, body, &result, input.ExpectedRevision)
 	return result, err
 }
 
@@ -63,8 +66,8 @@ func linksSchema() map[string]any {
 func linkTools() []toolDefinition {
 	revision := map[string]any{"type": "integer", "minimum": 1}
 	return []toolDefinition{
-		{Name: "link_task", Title: "Link Jira or MR", Description: "Upsert an exact scoped target; required by default, references never authorize completion.", InputSchema: objectSchema(map[string]any{"id": stringProperty("Full card ID"), "link": linkSchema(), "expectedRevision": revision}, []string{"id", "link"}), Annotations: annotations(false, false, true)},
-		{Name: "unlink_task", Title: "Remove a link", Description: "Remove a link owned by this card.", InputSchema: objectSchema(map[string]any{"id": stringProperty("Full card ID"), "linkId": stringProperty("Full link ID"), "expectedRevision": revision}, []string{"id", "linkId"}), Annotations: annotations(false, true, false)},
-		{Name: "log_review_delivered", Title: "Record finalized review delivery", Description: "After finalizing findings, record the covered review scope, complete only finished steps, then close your review before returning the report. Supplemental receipt; never posts to GitLab.", InputSchema: objectSchema(map[string]any{"id": stringProperty("Full review card ID"), "text": stringProperty("Finalized report or findings"), "subtaskId": stringProperty("Optional covered child ID"), "expectedRevision": revision}, []string{"id", "text"}), Annotations: annotations(false, false, false)},
+		{Name: "link_task", Title: "Link Jira or MR", Description: "Upsert an exact scoped target; required by default, references never authorize completion.", InputSchema: objectSchema(map[string]any{"id": stringProperty("Card ID or card number, such as 142 or #142"), "link": linkSchema(), "expectedRevision": revision}, []string{"id", "link"}), Annotations: annotations(false, false, true)},
+		{Name: "unlink_task", Title: "Remove a link", Description: "Remove a link owned by this card.", InputSchema: objectSchema(map[string]any{"id": stringProperty("Card ID or card number, such as 142 or #142"), "linkId": stringProperty("Full link ID"), "expectedRevision": revision}, []string{"id", "linkId"}), Annotations: annotations(false, true, false)},
+		{Name: "log_review_delivered", Title: "Record finalized review delivery", Description: "After finalizing findings, record the covered review scope, complete only finished steps, then close your review before returning the report. Supplemental receipt; never posts to GitLab.", InputSchema: objectSchema(map[string]any{"id": stringProperty("Review card ID or card number, such as 142 or #142"), "text": stringProperty("Finalized report or findings"), "subtaskId": stringProperty("Optional covered child ID"), "expectedRevision": revision}, []string{"id", "text"}), Annotations: annotations(false, false, false)},
 	}
 }
