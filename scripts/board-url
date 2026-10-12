@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Prints the board URL: TODO_URL, else the port setup saved in this clone's .env, else 7337.
+set -u
+
+if [[ -n "${TODO_URL:-}" ]]; then
+  printf '%s\n' "$TODO_URL"
+  exit 0
+fi
+env_file="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/.env"
+port=""
+[[ ! -f "$env_file" ]] || port=$(sed -n 's/^TODO_PORT=\([0-9][0-9]*\)$/\1/p' "$env_file" | tail -n 1)
+printf 'http://127.0.0.1:%s\n' "${port:-7337}"

@@ -60,7 +60,7 @@ state_dir="$HOME/.local/state/todo-board"
 work_dir="$state_dir/todo-reporter-run"
 log_dir="$HOME/.local/log"
 log_file="$log_dir/todo-reporter.log"
-todo_url="${TODO_URL:-http://127.0.0.1:7337}"
+todo_url="$("$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/board-url")"
 todo_url="${todo_url%/}"
 path_value="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 

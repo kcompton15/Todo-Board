@@ -55,7 +55,7 @@ launch_agents="$HOME/Library/LaunchAgents"
 plist="$launch_agents/$label.plist"
 log_dir="$HOME/.local/log"
 log_file="$log_dir/board-notifier.log"
-todo_url="${TODO_URL:-http://127.0.0.1:7337}"
+todo_url="$("$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/board-url")"
 todo_url="${todo_url%/}"
 [[ "$todo_url" =~ ^http://(127\.0\.0\.1|localhost)(:[0-9]+)?$ ]] || die "TODO_URL must be a loopback http origin"
 

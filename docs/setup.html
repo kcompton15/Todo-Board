@@ -244,7 +244,7 @@ todo help</code></pre>
 
     <section id="jira">
       <h2>Jira links <span class="optional">optional</span></h2>
-      <p>The board accepts Jira links only when the server knows your Jira host. Start the container with it set to a bare hostname. Without it, Jira links are rejected. GitLab merge request links on <code>gitlab.com</code> always work. Set it before the first start and keep it set. Changing or removing it after Jira links exist stops the server from loading the board.</p>
+      <p>The board accepts Jira links only when it knows your Jira site. Setup asks for it, or pass <code>--jira-site yourcompany.atlassian.net --issue-prefixes PROJ,OPS</code> to <code>scripts/team-setup</code>. Without it, Jira links are rejected; GitLab merge request links on <code>gitlab.com</code> always work. The site is saved in the clone's <code>.env</code>. Once Jira links exist, changing or removing it stops the board from loading, so setup refuses to change a saved site.</p>
       <div class="term">
         <div class="term-bar"><span>zsh</span><button class="copy" type="button" data-copy="jira">Copy</button></div>
         <pre id="jira-cmd"><code>TODO_JIRA_SITE=yourcompany.atlassian.net docker compose up -d</code></pre>
@@ -298,13 +298,13 @@ scripts/install-board-reconciler --enable</code></pre>
         <table class="stack">
           <thead><tr><th>Symptom</th><th>Fix</th></tr></thead>
           <tbody>
-            <tr><td><code>todo: command not found</code></td><td>Add <code>~/.local/bin</code> to PATH: <code>echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.zshrc &amp;&amp; exec zsh</code></td></tr>
+            <tr><td><code>todo: command not found</code></td><td><code>scripts/team-setup --add-to-path</code>, then open a new terminal.</td></tr>
             <tr><td>Board unreachable</td><td>Start Docker, then run <code>docker compose up -d</code> in the clone.</td></tr>
-            <tr><td>Port 7337 taken</td><td><code>TODO_PORT=7347 scripts/team-setup</code>, then add <code>export TODO_URL=http://127.0.0.1:7347</code> to <code>~/.zshrc</code>.</td></tr>
+            <tr><td>Port 7337 taken</td><td>Nothing to do: setup picks the next free port and saves it, and <code>todo</code> follows it. To choose one, <code>scripts/team-setup --port 7347</code>.</td></tr>
             <tr><td>No board context in Claude</td><td>Check <code>claude plugin list</code>, then start a new session.</td></tr>
             <tr><td>No board context in Codex</td><td>Start a session and approve "Loading active task board".</td></tr>
             <tr><td>Codex block "contains other sections"</td><td>An old hand-made block has its BEGIN marker above unrelated text. Move the marker down to the heading of the board section and rerun.</td></tr>
-            <tr><td>Jira links rejected</td><td>Start the container with <code>TODO_JIRA_SITE=yourcompany.atlassian.net</code>.</td></tr>
+            <tr><td>Jira links rejected</td><td><code>scripts/team-setup --jira-site yourcompany.atlassian.net</code></td></tr>
             <tr><td>Reconciler probe never finishes</td><td>A Keychain prompt is waiting. Click Always Allow.</td></tr>
             <tr><td><code>~/.local/bin/todo</code> points elsewhere</td><td>An older <code>todo</code> is installed. Move it aside and rerun setup.</td></tr>
           </tbody>

@@ -79,6 +79,7 @@ func newTeamEnv(t *testing.T) teamEnv {
 		"FAKE_STATE=" + state,
 		"FAKE_PLUGIN_SOURCE=" + filepath.Join(repo, "plugin"),
 		"TODO_PORT=" + port,
+		"TODO_ENV_FILE=" + filepath.Join(root, "board.env"),
 	}}
 }
 

@@ -23,9 +23,17 @@ scripts/team-setup
 
 Clone it anywhere you like. The script finds its own location. It's safe to rerun at any time.
 
+Setup asks up to three questions, and you can press Enter to skip each one:
+
+- **Your Jira site**, such as `yourcompany.atlassian.net`, if you want to link Jira issues to cards. Skip it if you don't use Jira; GitLab merge request links work either way.
+- **Jira project keys** that appear in your card titles, such as `PROJ,OPS`, so a title like `Fix PROJ-41` links to that issue on its own.
+- **Whether to add `~/.local/bin` to your PATH**, so the `todo` command works in new terminals.
+
+If port 7337 is already in use, setup picks the next free port and tells you. Your answers are saved in the clone's `.env` file, so later reruns and restarts keep them without asking again.
+
 When it finishes:
 
-1. Open http://127.0.0.1:7337. You should see an empty board.
+1. Open the board address setup prints (usually http://127.0.0.1:7337). You should see an empty board.
 2. Start a new Claude Code session. The first thing in its context is the board rules plus your active cards.
 3. Start a new Codex session. Codex asks you to trust a hook called "Loading active task board". Approve it once.
 
@@ -99,13 +107,9 @@ Rerunning `team-setup` rebuilds the container when server code changed, reinstal
 
 ## Optional: Jira links
 
-The board accepts Jira links only when the server knows your Jira host. Start the container with it set to a bare hostname:
+The board accepts Jira links only when it knows your Jira site. Setup asks for it, or you can pass it: `scripts/team-setup --jira-site yourcompany.atlassian.net --issue-prefixes PROJ,OPS`. Without it, Jira links are rejected; GitLab merge request links on `gitlab.com` always work.
 
-```bash
-TODO_JIRA_SITE=yourcompany.atlassian.net docker compose up -d
-```
-
-Without it, Jira links are rejected. GitLab merge request links on `gitlab.com` always work. Set it before the first start and keep it set. Changing or removing it after Jira links exist stops the server from loading the board.
+The site is saved in the clone's `.env`. Once Jira links exist, changing or removing it stops the board from loading, so setup refuses to change a saved site. If you really need to, edit `TODO_JIRA_SITE` in `.env` yourself.
 
 ## Optional: weekday notifier
 
@@ -185,13 +189,13 @@ Start with `scripts/board-doctor` (or `make doctor`). It checks each piece and p
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| `todo: command not found` | `~/.local/bin` is not on PATH | `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && exec zsh` |
+| `todo: command not found` | `~/.local/bin` is not on PATH | `scripts/team-setup --add-to-path`, then open a new terminal |
 | `todo` says the board is unreachable | Docker isn't running, or the container stopped | Start Docker, then `docker compose up -d` in the clone |
-| Port 7337 is taken | Something else is listening there | `TODO_PORT=7347 scripts/team-setup`, then `export TODO_URL=http://127.0.0.1:7347` in `~/.zshrc` |
+| Port 7337 is taken | Something else is listening there | Nothing to do: setup picks the next free port and saves it, and `todo` follows it. To choose one, `scripts/team-setup --port 7347` |
 | New Claude sessions show no board context | Plugin disabled, or the session predates setup | `claude plugin list`, then start a new session |
 | New Codex sessions show no board context | The hook wasn't approved | Start a session and approve "Loading active task board" |
 | Codex setup says the board block "contains other sections" | An old hand-made block has its BEGIN marker above unrelated text | Move `<!-- TODO-BOARD:BEGIN -->` down to the heading of the board section and rerun |
-| Jira links are rejected | The server doesn't know your Jira host | Start the container with `TODO_JIRA_SITE=yourcompany.atlassian.net` |
+| Jira links are rejected | The board doesn't know your Jira site | `scripts/team-setup --jira-site yourcompany.atlassian.net` |
 | Reconciler probe never finishes | A Keychain prompt is waiting | Find the prompt and click Always Allow |
 | Setup says `~/.local/bin/todo` points elsewhere | An older `todo` is installed | Move it aside and rerun setup |
 

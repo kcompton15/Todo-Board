@@ -17,7 +17,7 @@ binary_dir="$repo_root/bin"
 binary="$binary_dir/todo-mcp"
 config_dir="$HOME/Library/Application Support/Claude"
 config="$config_dir/claude_desktop_config.json"
-board_url="${TODO_URL:-http://127.0.0.1:7337}"
+board_url="$("$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/board-url")"
 
 mkdir -p "$binary_dir" "$config_dir"
 temp_binary=$(mktemp "$binary_dir/.todo-mcp.XXXXXX")

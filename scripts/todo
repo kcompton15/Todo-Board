@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TODO_URL="${TODO_URL:-http://127.0.0.1:7337}"
+if [[ -z "${TODO_URL:-}" ]]; then
+  # Follow the ~/.local/bin link back to the clone, whose .env may hold a non-default port.
+  self="${BASH_SOURCE[0]}"
+  [[ -L "$self" ]] && self=$(readlink "$self")
+  TODO_URL=$("$(dirname "$self")/board-url")
+fi
 # Codex shells carry CODEX_THREAD_ID and Claude Code shells CLAUDECODE=1, so agents need no TODO_ACTOR prefix.
 if [[ -n "${CODEX_THREAD_ID:-}" ]]; then default_actor=codex
 elif [[ "${CLAUDECODE:-}" == 1 ]]; then default_actor=claude-code
@@ -230,7 +235,7 @@ todo add also accepts [--link KEY_OR_URL]... [--agent-context TEXT] [--new]
 <card> is a number (142 or '#142') or a task ID prefix.
 <step> is a step number (3 or '#142.3') or a subtask ID prefix.
 
-Environment: TODO_URL (default http://127.0.0.1:7337), TODO_ACTOR (default codex or
+Environment: TODO_URL (default http://127.0.0.1 on the clone's saved TODO_PORT, else 7337), TODO_ACTOR (default codex or
   claude-code inside those agents' shells, otherwise cli; todo add --source also sets it),
   TODO_PROJECT (overrides this directory's project),
   TODO_REPORT_TIMEOUT (seconds todo report waits, default 180)

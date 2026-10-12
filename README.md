@@ -139,7 +139,7 @@ EOF
 | Variable | Used by | Default | Purpose |
 | --- | --- | --- | --- |
 | `TODO_PORT` | `docker compose` | `7337` | Host port. The bind address stays `127.0.0.1`. |
-| `TODO_URL` | `todo`, notifier, reconciler, MCP server | `http://127.0.0.1:7337` | Where clients find the board. Set it if you change the port. |
+| `TODO_URL` | `todo`, notifier, reconciler, MCP server | the port saved in `.env`, else `http://127.0.0.1:7337` | Where clients find the board. Only needed for a board this clone didn't set up. |
 | `TODO_JIRA_SITE` | `docker compose`, server | unset | Bare hostname such as `yourcompany.atlassian.net`. Enables Jira links. |
 | `TODO_ISSUE_PREFIXES` | `docker compose`, server | unset | Comma-separated Jira project keys such as `PROJ,OPS`. See [Jira keys in card titles](#jira-keys-in-card-titles). |
 | `TODO_ACTOR` | `todo` | `codex` or `claude-code` inside those agents, else `cli` | Label recorded as the author of each change. |
@@ -147,11 +147,7 @@ EOF
 | `TODO_DATA` | `docker compose` | `./data` | Host folder holding the board's state. |
 | `TODO_CONTAINER_NAME` | `docker compose` | `todo-board` | Container name. |
 
-Without `TODO_JIRA_SITE`, Jira links are rejected. GitLab merge request links on `gitlab.com` always work. If you will link Jira issues, set it before the first start and keep it set. Changing or removing it after Jira links exist stops the server from loading the board. Set it when you start the container:
-
-```bash
-TODO_JIRA_SITE=yourcompany.atlassian.net docker compose up -d
-```
+`scripts/team-setup` asks for the Jira values (or takes `--jira-site`, `--issue-prefixes`, `--no-jira` and `--port`) and saves them, with the port and container name, in the clone's git-ignored `.env`. Docker Compose reads that file on every start and `todo` follows its port, so nothing needs to be exported in your shell. Without `TODO_JIRA_SITE`, Jira links are rejected; GitLab merge request links on `gitlab.com` always work. Changing or removing the site after Jira links exist stops the server from loading the board, so setup refuses to change a saved one.
 
 ### Jira keys in card titles
 
@@ -162,7 +158,7 @@ Without the setting, the server reads no Jira keys from titles, so strings such 
 Prefixes apply when cards are created and matched, and links already stored never change, so you can add or change the setting at any time:
 
 ```bash
-TODO_JIRA_SITE=yourcompany.atlassian.net TODO_ISSUE_PREFIXES=PROJ,OPS docker compose up -d
+scripts/team-setup --jira-site yourcompany.atlassian.net --issue-prefixes PROJ,OPS
 ```
 
 ## Optional components

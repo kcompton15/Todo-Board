@@ -2,7 +2,7 @@
 set -uo pipefail
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
-todo_url="${TODO_URL:-http://127.0.0.1:7337}"
+todo_url="$("$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/board-url")"
 codex_home="${CODEX_HOME:-$HOME/.codex}"
 failures=0
 

@@ -8,7 +8,10 @@ Set up the Todo Board task board on this Mac.
 1. If I am not already inside a Todo-Board clone, clone https://github.com/kcompton15/Todo-Board.git.
    Ask me where to put it.
 2. Read docs/SETUP.md in the clone and follow its Install section.
-3. Run scripts/team-setup.
+3. Ask me, one at a time and in plain words: whether I link Jira issues to my work and, if so,
+   my Jira site (like yourcompany.atlassian.net) and the Jira project keys I use (like PROJ,OPS);
+   and whether you may add ~/.local/bin to my PATH in ~/.zshrc. Then run scripts/team-setup
+   with --jira-site and --issue-prefixes, or --no-jira, plus --add-to-path if I said yes.
 4. If preflight fails, fix only what it names. Ask before installing anything (Docker, Homebrew packages)
    or editing my shell profile.
 5. Run scripts/board-doctor and report each check.

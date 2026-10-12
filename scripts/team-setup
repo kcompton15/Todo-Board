@@ -4,9 +4,19 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 usage: scripts/team-setup [--dry-run] [--with-reconciler] [--with-notifier] [--skip-claude] [--skip-codex]
+                          [--jira-site HOST | --no-jira] [--issue-prefixes KEYS] [--port N]
 
 Starts the local board container, links the todo CLI, registers the todo-board Claude Code
-plugin and wires Codex. Safe to rerun. Env: TODO_PORT (default 7337), TODO_CONTAINER_NAME.
+plugin and wires Codex. Safe to rerun.
+
+Settings are saved in the clone's .env, so reruns and restarts keep them. Run in a terminal,
+setup asks for any it still needs; run by an agent, pass them as options:
+  --jira-site HOST       your Jira site, such as yourcompany.atlassian.net, to allow Jira links
+  --no-jira              you don't use Jira (GitLab merge request links always work)
+  --issue-prefixes KEYS  Jira project keys to read from card titles, such as PROJ,OPS
+  --port N               host port (default 7337, or the next free one if 7337 is taken)
+  --add-to-path          add ~/.local/bin to PATH in ~/.zshrc if it is missing
+Env: TODO_PORT, TODO_CONTAINER_NAME, TODO_JIRA_SITE, TODO_ISSUE_PREFIXES override the saved values.
 EOF
 }
 
@@ -15,23 +25,67 @@ die() {
   exit 1
 }
 
-dry_run=false with_reconciler=false with_notifier=false skip_claude=false skip_codex=false
-for argument in "$@"; do
-  case "$argument" in
+dry_run=false with_reconciler=false with_notifier=false skip_claude=false skip_codex=false add_to_path=false
+opt_site="" opt_site_set=false opt_prefixes="" opt_prefixes_set=false opt_port=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
     --dry-run) dry_run=true ;;
     --with-reconciler) with_reconciler=true ;;
     --with-notifier) with_notifier=true ;;
     --skip-claude) skip_claude=true ;;
     --skip-codex) skip_codex=true ;;
+    --add-to-path) add_to_path=true ;;
+    --jira-site) [[ $# -ge 2 ]] || die "--jira-site needs a host"; opt_site="$2"; opt_site_set=true; shift ;;
+    --no-jira) opt_site=""; opt_site_set=true; opt_prefixes=""; opt_prefixes_set=true ;;
+    --issue-prefixes) [[ $# -ge 2 ]] || die "--issue-prefixes needs keys"; opt_prefixes="$2"; opt_prefixes_set=true; shift ;;
+    --port) [[ $# -ge 2 ]] || die "--port needs a number"; opt_port="$2"; shift ;;
     -h | --help) usage && exit 0 ;;
     *) usage >&2 && exit 1 ;;
   esac
+  shift
 done
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
-port="${TODO_PORT:-7337}"
-[[ "$port" =~ ^[0-9]+$ ]] || die "TODO_PORT must be a number"
-export TODO_URL="http://127.0.0.1:$port"
+env_file="${TODO_ENV_FILE:-$repo/.env}"
+interactive=false
+[[ -t 0 && -t 1 ]] && interactive=true
+
+saved() { [[ -f "$env_file" ]] && sed -n "s/^$1=//p" "$env_file" | tail -n 1; return 0; }
+ask() {
+  local answer
+  printf '%s' "$1" >&2
+  IFS= read -r answer || answer=""
+  printf '%s' "$answer"
+}
+normalize_site() {
+  local site
+  site=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -e 's#^[a-z]*://##' -e 's#/.*$##' -e 's/[[:space:]]//g')
+  [[ -z "$site" || "$site" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]] ||
+    die "'$1' is not a Jira site; use a bare host such as yourcompany.atlassian.net"
+  printf '%s' "$site"
+}
+normalize_prefixes() {
+  local prefixes key
+  prefixes=$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]' | sed -e 's/,,*/,/g' -e 's/^,//' -e 's/,$//')
+  for key in ${prefixes//,/ }; do
+    [[ "$key" =~ ^[A-Z][A-Z0-9]+$ ]] || die "'$key' is not a Jira project key; use letters and digits starting with a letter, such as PROJ"
+  done
+  printf '%s' "$prefixes"
+}
+port_busy() { nc -z -G 1 127.0.0.1 "$1" >/dev/null 2>&1; }
+# Without a .env, adopt what an existing container was started with, so a rerun cannot drop it.
+running() {
+  [[ -f "$env_file" ]] && return 0
+  docker inspect "$container" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | sed -n "s/^$1=//p" | head -n 1
+  return 0
+}
+running_port() {
+  [[ -f "$env_file" ]] && return 0
+  docker port "$container" 7337 2>/dev/null | sed -n 's/^127\.0\.0\.1:\([0-9][0-9]*\)$/\1/p' | head -n 1
+  return 0
+}
+
+export TODO_URL="http://127.0.0.1:${TODO_PORT:-7337}"
 bin_dir="$HOME/.local/bin"
 todo_link="$bin_dir/todo"
 step=0
@@ -64,6 +118,65 @@ have_claude=false have_codex=false
 [[ "$skip_claude" == false ]] && have claude && have_claude=true
 [[ "$skip_codex" == false ]] && have codex && have_codex=true
 say "  Claude Code: $([[ "$have_claude" == true ]] && echo found || echo skipped)  Codex: $([[ "$have_codex" == true ]] && echo found || echo skipped)"
+
+heading "Settings"
+container="${TODO_CONTAINER_NAME:-$(saved TODO_CONTAINER_NAME)}"
+container="${container:-todo-board}"
+
+saved_site=$(saved TODO_JIRA_SITE)
+[[ -n "$saved_site" ]] || saved_site=$(running TODO_JIRA_SITE)
+if [[ -n "${TODO_JIRA_SITE+set}" ]]; then site="$TODO_JIRA_SITE"
+elif [[ "$opt_site_set" == true ]]; then site="$opt_site"
+elif [[ -n "$saved_site" || -f "$env_file" ]]; then site="$saved_site"
+elif [[ "$interactive" == true ]]; then
+  site=$(ask "Jira site for linking issues, such as yourcompany.atlassian.net (Enter to skip): ")
+else site=""
+fi
+site=$(normalize_site "$site")
+if [[ -n "$saved_site" && "$site" != "$saved_site" ]]; then
+  die "this board is set up for Jira site $saved_site. Changing it after Jira links exist stops the board from loading, so setup won't. To change it on purpose, edit TODO_JIRA_SITE in $env_file."
+fi
+
+if [[ -n "${TODO_ISSUE_PREFIXES+set}" ]]; then prefixes="$TODO_ISSUE_PREFIXES"
+elif [[ "$opt_prefixes_set" == true ]]; then prefixes="$opt_prefixes"
+elif [[ -f "$env_file" ]]; then prefixes=$(saved TODO_ISSUE_PREFIXES)
+elif [[ -n "$(running TODO_ISSUE_PREFIXES)" ]]; then prefixes=$(running TODO_ISSUE_PREFIXES)
+elif [[ "$interactive" == true && -n "$site" ]]; then
+  prefixes=$(ask "Jira project keys that appear in card titles, such as PROJ,OPS (Enter to skip): ")
+else prefixes=""
+fi
+prefixes=$(normalize_prefixes "$prefixes")
+[[ -z "$prefixes" || -n "$site" ]] || die "issue prefixes need a Jira site; pass --jira-site too"
+
+port="${opt_port:-${TODO_PORT:-$(saved TODO_PORT)}}"
+port="${port:-$(running_port)}"
+if [[ -z "$port" ]]; then
+  port=7337
+  if port_busy "$port" && ! docker ps --filter "name=^${container}$" --filter "publish=$port" --format '{{.Names}}' 2>/dev/null | grep -q .; then
+    for candidate in $(seq 7338 7399); do
+      port_busy "$candidate" || { port="$candidate"; break; }
+    done
+    [[ "$port" != 7337 ]] || die "ports 7337-7399 are all taken; pass --port N"
+    say_port_note="7337 is taken, so the board uses $port"
+  fi
+fi
+[[ "$port" =~ ^[0-9]+$ ]] || die "the port must be a number"
+export TODO_PORT="$port" TODO_CONTAINER_NAME="$container" TODO_JIRA_SITE="$site" TODO_ISSUE_PREFIXES="$prefixes"
+export TODO_URL="http://127.0.0.1:$port"
+[[ -z "${say_port_note:-}" ]] || say "  $say_port_note"
+say "  port $port, container $container, Jira ${site:-off}${prefixes:+, title keys $prefixes}"
+if [[ "$dry_run" == true ]]; then
+  say "  would save them to $env_file"
+else
+  tmp_env=$(mktemp "${env_file}.XXXXXX")
+  { if [[ -f "$env_file" ]]; then
+      grep -v -E '^(TODO_PORT|TODO_CONTAINER_NAME|TODO_JIRA_SITE|TODO_ISSUE_PREFIXES)=' "$env_file" || [[ $? -eq 1 ]]
+    fi
+    printf 'TODO_PORT=%s\nTODO_CONTAINER_NAME=%s\nTODO_JIRA_SITE=%s\nTODO_ISSUE_PREFIXES=%s\n' "$port" "$container" "$site" "$prefixes"
+  } > "$tmp_env"
+  mv "$tmp_env" "$env_file"
+  say "  saved to $env_file"
+fi
 
 heading "Board container on 127.0.0.1:$port"
 run docker compose -f "$repo/docker-compose.yml" up -d --build
@@ -137,7 +250,23 @@ fi
 
 printf '\nDone%s.\n' "$([[ "$dry_run" == true ]] && echo ' (dry run, nothing changed)')"
 say "  Board:  $TODO_URL"
-[[ "$path_ok" == true ]] || say "  PATH:   echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.zshrc && exec zsh"
-[[ "$port" == 7337 ]] || say "  Port:   echo 'export TODO_URL=$TODO_URL' >> ~/.zshrc   (the CLI defaults to 7337)"
+if [[ "$path_ok" == false ]]; then
+  if [[ "$add_to_path" == false && "$interactive" == true && "$dry_run" == false ]]; then
+    [[ "$(ask "Add ~/.local/bin to your PATH in ~/.zshrc so 'todo' works in new terminals? [Y/n] ")" =~ ^[Nn] ]] || add_to_path=true
+  fi
+  path_line='export PATH="$HOME/.local/bin:$PATH"'
+  if [[ "$add_to_path" == true ]] && grep -qxF "$path_line" "$HOME/.zshrc" 2>/dev/null; then
+    say "  PATH:   ~/.zshrc already adds ~/.local/bin; open a new terminal"
+  elif [[ "$add_to_path" == true ]]; then
+    if [[ "$dry_run" == true ]]; then
+      say "  PATH:   would add ~/.local/bin to ~/.zshrc"
+    else
+      printf '\n# Todo Board CLI\n%s\n' "$path_line" >> "$HOME/.zshrc"
+      say "  PATH:   added ~/.local/bin to ~/.zshrc; open a new terminal"
+    fi
+  else
+    say "  PATH:   echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.zshrc && exec zsh"
+  fi
+fi
 say "  Next:   start a new Claude Code or Codex session; the board rules and active cards load at start."
 say "  Check:  $repo/scripts/board-doctor"
