@@ -1,4 +1,5 @@
 /data/*
+/.sandbox-data/
 !/data/.gitkeep
 /bin/
 /.exec-plans/

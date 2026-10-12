@@ -1,13 +1,12 @@
 """Links browser regression. Mutates only disposable cards via API/UI. Run against a board started with TODO_JIRA_SITE=example.atlassian.net."""
 
 import json
-import subprocess
 import tempfile
 import time
 import uuid
 from pathlib import Path
 
-from acceptance import ROOT, URL, api
+from acceptance import URL, api, restart_board
 from playwright.sync_api import expect, sync_playwright
 
 
@@ -114,7 +113,7 @@ def main():
 
         receipt = api("POST", path + "/work-log", {"kind": "review_delivered", "text": "Finalized test review", "subtaskId": task["subtasks"][0]["id"]})
         persisted = api("GET", path)
-        subprocess.run(["docker", "compose", "restart", "board"], cwd=ROOT, check=True)
+        restart_board()
         for attempt in range(60):
             try:
                 reloaded = api("GET", path)

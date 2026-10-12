@@ -1,4 +1,4 @@
-.PHONY: run test validate build build-mcp build-reconciler build-reporter build-darwin install-claude-desktop setup doctor uninstall up down logs
+.PHONY: run test validate build build-mcp build-reconciler build-reporter build-darwin install-claude-desktop setup doctor uninstall up down logs sandbox sandbox-down
 
 run:
 	go run ./cmd/todod
@@ -74,3 +74,15 @@ down:
 
 logs:
 	docker compose logs -f board
+
+SANDBOX_PORT ?= 7348
+SANDBOX := TODO_PORT=$(SANDBOX_PORT) TODO_CONTAINER_NAME=anew-todo-sandbox TODO_DATA=$(CURDIR)/.sandbox-data docker compose -p anew-todo-sandbox
+
+sandbox:
+	rm -rf .sandbox-data && mkdir -p .sandbox-data
+	$(SANDBOX) up -d --build --wait
+	@echo "Sandbox board: TODO_URL=http://127.0.0.1:$(SANDBOX_PORT)"
+
+sandbox-down:
+	$(SANDBOX) down
+	rm -rf .sandbox-data

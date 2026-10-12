@@ -12,14 +12,21 @@ import os
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
 
-URL = os.environ.get("TODO_URL", "http://127.0.0.1:7337")
+URL = os.environ.get("TODO_URL", "http://127.0.0.1:7337").rstrip("/")
 ROOT = Path(__file__).resolve().parent.parent
+
+if URL in ("http://127.0.0.1:7337", "http://localhost:7337") and os.environ.get("TODO_ALLOW_LIVE") != "1":
+    raise SystemExit(
+        f"refusing to write test cards to the live board at {URL}. "
+        "Run `make sandbox` and set TODO_URL=http://127.0.0.1:7348, or set TODO_ALLOW_LIVE=1."
+    )
 
 
 def api(method, path, body=None):
@@ -33,6 +40,16 @@ def api(method, path, body=None):
     with urllib.request.urlopen(request, timeout=10) as response:
         payload = response.read()
         return json.loads(payload) if payload else None
+
+
+def restart_board():
+    port = urllib.parse.urlsplit(URL).port or 80
+    names = subprocess.check_output(
+        ["docker", "ps", "--filter", f"publish={port}", "--format", "{{.Names}}"], text=True
+    ).split()
+    if len(names) != 1:
+        raise RuntimeError(f"expected one container publishing port {port}, found {names}")
+    subprocess.run(["docker", "restart", names[0]], check=True)
 
 
 def main():
@@ -264,9 +281,7 @@ def main():
             history_before = api("GET", "/api/activity?taskId=" + task["id"])
             if "--restart" in sys.argv:
                 restarting = True
-                subprocess.run(
-                    ["docker", "compose", "restart", "board"], cwd=ROOT, check=True
-                )
+                restart_board()
                 for _ in range(30):
                     try:
                         api("GET", "/api/tasks")
