@@ -37,6 +37,11 @@ func TestPluginAllowsOnlyPlainTodoCommands(t *testing.T) {
 		`TODO_ACTOR=x todo ls`:        false,
 		`echo todo`:                   false,
 		`todos ls`:                    false,
+		`todo rm 5`:                   false,
+		`todo import /etc/hosts`:      false,
+		`todo ops payload.json`:       false,
+		`todo`:                        false,
+		`todo "ls"`:                   false,
 		`todo add "a \" ; rm x"`:      false,
 		``:                            false,
 	}
