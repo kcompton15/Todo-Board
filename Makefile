@@ -76,7 +76,7 @@ logs:
 	docker compose logs -f board
 
 SANDBOX_PORT ?= 7348
-SANDBOX := TODO_PORT=$(SANDBOX_PORT) TODO_CONTAINER_NAME=todo-board-sandbox TODO_DATA=$(CURDIR)/.sandbox-data docker compose -p todo-board-sandbox
+SANDBOX := TODO_PORT=$(SANDBOX_PORT) TODO_CONTAINER_NAME=todo-board-sandbox TODO_DATA=$(CURDIR)/.sandbox-data docker compose
 
 sandbox:
 	rm -rf .sandbox-data && mkdir -p .sandbox-data

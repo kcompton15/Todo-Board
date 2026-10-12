@@ -1,3 +1,4 @@
+name: ${TODO_CONTAINER_NAME:-todo-board}
 services:
   board:
     build:
