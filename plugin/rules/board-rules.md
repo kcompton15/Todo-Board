@@ -8,6 +8,14 @@ effects; do not ask separately whether to perform them.
 
 - Match before creating: run `todo find "keywords"` unless the session-start context already
   shows the relevant card. Update or start a matching open card instead of duplicating it.
+- The session-start context lists this directory's project first, and `todo add` files new cards
+  under it when you omit `--project` (`todo project` prints it). Pass `--project` only for work
+  that belongs elsewhere. If a directory maps to the wrong project, put the right name in a
+  `.todo-project` file there.
+- A card marked `(idle Nd)`, or counted in the idle line, has had no real activity for that long.
+  If your work covers it, pick it up with `todo start <N>` rather than creating a new card.
+- No card for a step of a card already listed (add or check a step), a question, or a chore
+  inside the current task.
 - One open card per Jira key or MR. Re-review rounds, fix-ups and follow-up passes on the same
   key or MR are steps on that card, not new cards. Use subtasks for review units and steps.
 - Whenever a Jira key or MR exists, pass `--link KEY` (or put the MR, or a key from a project in

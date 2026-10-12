@@ -33,6 +33,8 @@ The MCP server gives Claude the task operations, but the model still decides whe
 
 Always run `todo find "keywords"` unless the session-start hook already showed the matching active card.
 
+The hook passes the session's directory to `todo context`, which names that directory's project in its header and lists its cards first. `todo add` without `--project` files under the same project (`todo project` prints it; a `.todo-project` file or `TODO_PROJECT` overrides it). Cards marked `(idle Nd)`, and the idle count line, have had no real activity for that long; pick one up with `todo start` instead of creating a duplicate. `todo stale` lists them.
+
 - A match in In progress is the current work. Add or check subtasks; do not create a duplicate.
 - A match in Today or Backlog should be started with `todo start <id>`.
 - A match in Blocked should move back to In progress only when the blocker is actually resolved.

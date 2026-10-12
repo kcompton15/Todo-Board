@@ -54,6 +54,10 @@ The plugin also adds three slash commands:
 You don't have to do anything. The rules tell the agent to:
 
 - Run `todo find` before creating a card, so it updates an existing card rather than making a duplicate.
+- Start from the cards for the project you're in. The session context leads with them, and new
+  cards file under that project without being told. `todo project` shows which project a folder
+  maps to; if it guesses wrong, or your folder names don't match, put the project name in a
+  `.todo-project` file at the top of that folder.
 - Create one card per outcome, with steps as subtasks.
 - Keep one open card per Jira key or MR. Re-reviews and fix-ups on the same key become steps on
   that card. Passing `--link KEY` makes `todo add` attach to the open card automatically;
@@ -67,6 +71,10 @@ You don't have to do anything. The rules tell the agent to:
 - Close its own reviews and probes when it hands back the result.
 - Close `work` only after it has verified the result. Otherwise it leaves the card open, marked "ready to close".
 - Never touch a `followup`. That one is yours.
+
+Cards nobody has touched for a week are marked idle, and idle cards from other projects shrink to
+one line so they don't crowd the context. `todo stale` lists them so you can close or restart
+them.
 
 If you want something tracked for certain, say "track this on my board". You can use `todo` yourself, too:
 

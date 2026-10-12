@@ -30,6 +30,7 @@ Task example:
   "order": 1000,
   "createdAt": "2026-09-17T16:30:00Z",
   "updatedAt": "2026-09-17T16:45:00Z",
+  "activityAt": "2026-09-17T16:45:00Z",
   "subtasks": [{"id":"sabc1234","number":1,"title":"Review API MR","lane":"blocked","done":false}]
 }
 ```
@@ -59,6 +60,8 @@ A batch that attaches anything returns `{"tasks":[created...],"attachments":[{"t
 ## Search
 
 `q` is split into lowercase words. A card matches when any word appears in its title, notes, project, tag, step titles, link refs or URLs, or equals its number (`142`, `#142`, `142.3`). Results are sorted by score, then the usual order: an exact number scores 3, a title hit at a word start 2, and any other hit 1, counted once per word. `todo find` prints the top 10 and how many more matched. The browser filter applies the same words and fields as an any-match filter but keeps lane order.
+
+`activityAt` is the last real change to the card: creation, or any change to its content, lane, steps or links. Reorders (`order` only), link status refreshes and the reconciler's link discovery move `updatedAt` but not `activityAt`, and work-log entries move neither. Cards stored before the field existed get it from their history on load. `todo stale` and the session context use it to find idle cards.
 
 Project and tag spellings are folded on write: names that differ only by case, spaces, `_` or `-` are stored as the spelling most other cards already use (ties prefer an all-lowercase spelling, then the alphabetically first). Create and PUT always fold; PATCH folds only the fields it sends. `scripts/backfill-projects.py` (dry run by default, `--apply` to write) fixes drifted spellings already on the board and reports near-duplicates without changing them.
 

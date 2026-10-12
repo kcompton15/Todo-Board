@@ -38,17 +38,21 @@ The integrations tell agents to run `todo find` before creating anything, so the
 
 They keep one open card per Jira key or merge request, so a second review round or a fix-up becomes a step on the existing card rather than a new card. The board backs this up with [card numbers and automatic attach](#card-numbers-attach-and-search).
 
-Agents close their own reviews and probes when they hand back the result. They close `work` only when you asked for it and it is verified. Otherwise they leave it open and record a `next_step` saying it is ready to close. These updates are authorized side effects of the assignment, so agents do not ask separately before creating or closing a card. A session-start hook loads your active cards, plus a short list of open backlog and probe cards, into each new Claude Code or Codex session. If the board is down, agents mention it once and keep working. Details are in [docs/AGENT-INTEGRATION.md](docs/AGENT-INTEGRATION.md).
+Agents close their own reviews and probes when they hand back the result. They close `work` only when you asked for it and it is verified. Otherwise they leave it open and record a `next_step` saying it is ready to close. These updates are authorized side effects of the assignment, so agents do not ask separately before creating or closing a card. A session-start hook loads your active cards, plus a short list of open backlog and probe cards, into each new Claude Code or Codex session. Cards for the project you are working in come first, and new cards file under that project on their own (see [the directory's project](#card-numbers-attach-and-search)). Subagents get the rules too, but leave card creation to the session that started them. If the board is down, agents mention it once and keep working. Details are in [docs/AGENT-INTEGRATION.md](docs/AGENT-INTEGRATION.md).
 
 ## Card numbers, attach and search
 
-Four features keep the board readable when several agents write to it at once.
+Six features keep the board readable when several agents write to it at once.
 
 **Numbers.** Every card gets a board-wide number (`#142`) and every step a number within its card (`#142.3`). Numbers are never reused, and the CLI, HTTP API, MCP tools and web UI accept them anywhere they accept an ID. Internal IDs remain the primary key.
 
 **Attach instead of duplicate.** When new work names a Jira key or merge request that an open card already covers, it becomes a step on that card. If only Done cards cover it, a new card is created with `Follow-on to #N.` in its notes. `--new` creates a separate card anyway. The CLI, MCP server and inbox attach by default. The HTTP API and web UI ask first: the API returns `409` naming the card, and the UI offers *Open*, *Create anyway* or *Dismiss*.
 
 **Folded names.** Project and tag spellings that differ only by case, spaces, `_` or `-` are stored as the spelling most cards already use, so `web app`, `Web_App` and `Web App` stay one project. `scripts/backfill-projects.py` previews fixes for spellings already on the board, `--apply` writes them, and near-duplicate names are reported but left alone.
+
+**The directory's project.** `todo project` names the board project for the current directory, and `todo add` without `--project` files the card there. It needs no setup: it uses the nearest folder name or git repository name that matches a project already on your board, ignoring case and punctuation, and also matches names that start or end with a project's name (`web-app-worktrees` and `acme-web-app` both give `web-app`). It never invents a project. To choose one yourself, put the name on the first line of a `.todo-project` file in the folder, or set `TODO_PROJECT`.
+
+**Idle cards.** Each card records `activityAt`, the last time its content, lane or steps changed. Dragging a card or a link-status refresh does not count. Session context marks cards with no activity for 7 days as `(idle Nd)` and folds idle cards from other projects into one line, and `todo stale` lists them so you can close or restart them.
 
 **Ranked search.** `todo find`, `?q=` and the UI search match a card when any word appears in its title, notes, project, tag, step titles or link refs, or equals its number. Results put exact numbers and title hits first.
 
@@ -100,6 +104,8 @@ todo find "rate confirmation"
 todo add "Review billing changes" --kind review --project Billing --tag Review \
   --link "team/api!175" --sub "Review API MR" --sub "Review web MR"
 todo ls --project Web
+todo project                      # this folder's board project
+todo stale                        # open cards idle for 7+ days
 todo show 142
 todo start 142
 todo sub 142 "Confirm callback URLs" --lane doing
@@ -136,7 +142,9 @@ EOF
 | `TODO_URL` | `todo`, notifier, reconciler, MCP server | `http://127.0.0.1:7337` | Where clients find the board. Set it if you change the port. |
 | `TODO_JIRA_SITE` | `docker compose`, server | unset | Bare hostname such as `yourcompany.atlassian.net`. Enables Jira links. |
 | `TODO_ISSUE_PREFIXES` | `docker compose`, server | unset | Comma-separated Jira project keys such as `PROJ,OPS`. See [Jira keys in card titles](#jira-keys-in-card-titles). |
-| `TODO_ACTOR` | `todo` | `cli` | Label recorded as the author of each change. |
+| `TODO_ACTOR` | `todo` | `codex` or `claude-code` inside those agents, else `cli` | Label recorded as the author of each change. |
+| `TODO_PROJECT` | `todo` | unset | Board project for new cards and session context, overriding the folder's `.todo-project` file and name matching. |
+| `TODO_DATA` | `docker compose` | `./data` | Host folder holding the board's state. |
 | `TODO_CONTAINER_NAME` | `docker compose` | `todo-board` | Container name. |
 
 Without `TODO_JIRA_SITE`, Jira links are rejected. GitLab merge request links on `gitlab.com` always work. If you will link Jira issues, set it before the first start and keep it set. Changing or removing it after Jira links exist stops the server from loading the board. Set it when you start the container:
@@ -194,13 +202,17 @@ make down
 `make test` runs `go test -race`, `go vet` and a gofmt check. `make validate` adds shell, plugin, JavaScript and Compose checks, and needs Node, Deno and Docker. Browser acceptance tests are opt-in:
 
 ```bash
+make sandbox                                  # fresh board from this checkout on 127.0.0.1:7348
+export TODO_URL=http://127.0.0.1:7348
 uv run --with playwright python -m playwright install chromium
 uv run --with playwright python scripts/acceptance.py run /tmp/board-qa --restart
 uv run --with playwright python scripts/ui-regression.py
-TODO_URL=http://127.0.0.1:7348 uv run --with playwright python scripts/ui-polish-regression.py
+uv run --with playwright python scripts/ui-polish-regression.py
+uv run --with playwright python scripts/links-regression.py
+make sandbox-down
 ```
 
-The polish regression refuses to run against ports 7337 and 7338; point it at a throwaway board started with its own TODO_DATA_DIR.
+The browser tests create and delete their own cards. They refuse `127.0.0.1:7337` unless `TODO_ALLOW_LIVE=1`, the polish regression also refuses 7338, and a container restart only touches the container publishing `TODO_URL`'s port.
 
 The HTTP API is documented in [docs/API.md](docs/API.md). Contributor notes for agents are in [AGENTS.md](AGENTS.md).
 
