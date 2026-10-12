@@ -24,6 +24,8 @@ validate: test
 	bash -n scripts/team-uninstall
 	bash -n scripts/board-doctor
 	bash -n plugin/scripts/session-start.sh
+	bash -n plugin/scripts/subagent-start.sh
+	bash -n plugin/scripts/allow-todo.sh
 	jq -e . .claude-plugin/marketplace.json plugin/.claude-plugin/plugin.json plugin/hooks/hooks.json >/dev/null
 	@if command -v claude >/dev/null 2>&1; then claude plugin validate .; else echo "claude not installed; skipped plugin validate"; fi
 	node scripts/check-web.mjs

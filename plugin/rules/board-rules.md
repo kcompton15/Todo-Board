@@ -43,7 +43,8 @@ effects; do not ask separately whether to perform them.
   are complete before returning the report. No further user confirmation is needed.
 - Delivery receipts are supplemental. If the board reconciler is installed, it also recognizes the
   user's own matching substantive GitLab comments or approval, or merged/closed review targets,
-  with coverage for every MR in that review round. Inactivity alone is insufficient. None of this
+  with coverage for every MR in that review round. Historical reviews do not require a new receipt.
+  Inactivity alone is insufficient. None of this
   authorizes posting comments or approvals to GitLab.
 - Use `todo reconcile <N> manual` to exclude all future automatic updates; use open subtasks
   or manual mode for deployment, QA or acceptance beyond merge. Use `todo memo <N> "context"`

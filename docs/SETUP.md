@@ -43,6 +43,10 @@ Would you rather have an agent do the setup? Paste [prompts/setup.md](prompts/se
 
 Setup never edits your `~/.claude/CLAUDE.md` or `~/.claude/settings.json`. The Claude side lives entirely in the plugin. Before it changes an existing Codex file, setup saves a backup next to it named `*.bak-todo-board-<timestamp>`.
 
+The plugin also gives subagents the board rules (with a note that they leave card creation to the
+session that started them), and approves a plain `todo ...` command without a permission prompt.
+Anything chained, piped, redirected or substituted still asks.
+
 The plugin also adds three slash commands:
 
 - `/todo-board:setup` reruns and checks the setup.
