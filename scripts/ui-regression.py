@@ -1,8 +1,9 @@
-"""Live regression for crowded columns and notes-only expansion. Uses disposable API records."""
+"""Live regression for crowded columns, notes-only expansion and the report dialog. Uses disposable API records."""
 
 import json
 import tempfile
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from acceptance import URL, api
@@ -59,6 +60,124 @@ def check_subtask_editing(browser, task_id, title):
     assert not errors, errors
     page.close()
 
+REPORT_DIGEST = (
+    "# Weekly report (2026-10-05 through 2026-10-11)\n\n## Billing\n"
+    "- #215 Invoices follow the account owner (done)\n"
+    "  - Observed: web!140 merged\n"
+)
+REPORT_DRAFT = (
+    "- Billing: invoices now follow the account owner (#215)\n"
+    "  - Web deploys first, then API"
+)
+
+
+def route_report_jobs(page, fake):
+    def reply(route, status, body):
+        route.fulfill(status=status, content_type="application/json", body=json.dumps(body))
+
+    def job(route):
+        reply(route, 200, {"id": "rqa", "cardCount": 1, "digestMarkdown": REPORT_DIGEST, **fake["job"]})
+
+    page.route("**/api/reports/worker", lambda route: reply(route, 200, {"lastClaimAt": fake["lastClaimAt"]}))
+    page.route(
+        "**/api/reports/preview",
+        lambda route: reply(route, 200, {"markdown": REPORT_DIGEST, "sourceRecordIds": [], "partialLegacyHistory": False}),
+    )
+    page.route(
+        "**/api/reports/jobs",
+        lambda route: reply(route, 202, {"id": "rqa", "state": "queued", "cardCount": 3, "digestMarkdown": REPORT_DIGEST}),
+    )
+    page.route("**/api/reports/jobs/rqa", job)
+
+
+def open_weekly_report(page):
+    page.locator("#weeklyButton").click()
+    expect(page.locator("#reportDialog")).to_be_visible()
+    page.locator("#reportStart").fill("2026-10-05")
+    page.locator("#reportEnd").fill("2026-10-11")
+
+
+def assert_report_fits(page):
+    fits = page.locator("#reportDialog").evaluate(
+        "d => d.scrollWidth <= d.clientWidth + 1 && d.getBoundingClientRect().right <= innerWidth"
+    )
+    assert fits, "report dialog overflows horizontally"
+
+
+def check_report_dialog(browser, evidence):
+    for width in [1440, 390]:
+        for theme in ["light", "dark"]:
+            page = browser.new_page(viewport={"width": width, "height": 900}, reduced_motion="reduce")
+            errors = []
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            fake = {"lastClaimAt": datetime.now(timezone.utc).isoformat(), "job": {"state": "running"}}
+            route_report_jobs(page, fake)
+            page.goto(URL)
+            page.wait_for_load_state("networkidle")
+            page.evaluate("theme => document.documentElement.dataset.theme = theme", theme)
+            marker = f"report-{width}-{theme}"
+            output, label = page.locator("#reportOutput"), page.locator("#reportOutputLabel")
+            toggle, message = page.locator("#reportEvidence"), page.locator("#reportMessage")
+
+            open_weekly_report(page)
+            page.locator("#runReport").click()
+            expect(message).to_contain_text("Turning 3 cards into something you can say out loud")
+            expect(page.locator("#runReport")).to_be_disabled()
+            expect(toggle).to_be_disabled()
+            assert_report_fits(page)
+            page.screenshot(path=str(evidence / f"{marker}-waiting.png"), animations="disabled")
+
+            fake["job"] = {"state": "done", "markdown": REPORT_DRAFT}
+            expect(label).to_have_text("AI draft")
+            expect(output).to_have_value(REPORT_DRAFT)
+            expect(message).to_contain_text("Talking points from 1 card.")
+            expect(page.locator("#runReport")).to_be_enabled()
+            assert_report_fits(page)
+            page.screenshot(path=str(evidence / f"{marker}-draft.png"), animations="disabled")
+
+            output.fill(REPORT_DRAFT + "\n- Edited by hand")
+            toggle.click()
+            expect(toggle).to_have_attribute("aria-pressed", "true")
+            expect(label).to_have_text("Evidence digest (not AI-written)")
+            expect(output).to_have_value(REPORT_DIGEST)
+            page.screenshot(path=str(evidence / f"{marker}-evidence.png"), animations="disabled")
+            toggle.click()
+            expect(output).to_have_value(REPORT_DRAFT + "\n- Edited by hand")
+
+            fake["lastClaimAt"] = None
+            page.locator("#runReport").click()
+            expect(label).to_have_text("Evidence digest (not AI-written)")
+            expect(output).to_have_value(REPORT_DIGEST)
+            expect(message).to_contain_text("has not checked in since the board started")
+            expect(message).to_contain_text("scripts/install-todo-reporter --enable")
+            expect(toggle).to_be_disabled()
+            assert_report_fits(page)
+            page.screenshot(path=str(evidence / f"{marker}-worker-missing.png"), animations="disabled")
+
+            fake["lastClaimAt"] = datetime.now(timezone.utc).isoformat()
+            fake["job"] = {"state": "failed", "error": "Claude version has not been isolation-verified"}
+            page.locator("#runReport").click()
+            expect(message).to_contain_text("The report writer gave up: Claude version has not been isolation-verified.")
+            expect(output).to_have_value(REPORT_DIGEST)
+            page.screenshot(path=str(evidence / f"{marker}-failed.png"), animations="disabled")
+            assert not errors, errors
+            page.close()
+
+    page = browser.new_page(viewport={"width": 1440, "height": 900})
+    page.clock.install()
+    fake = {"lastClaimAt": None, "job": {"state": "running"}}
+    route_report_jobs(page, fake)
+    page.goto(URL)
+    page.wait_for_load_state("networkidle")
+    fake["lastClaimAt"] = page.evaluate("() => new Date().toISOString()")
+    open_weekly_report(page)
+    page.locator("#runReport").click()
+    expect(page.locator("#reportMessage")).to_contain_text("Turning 3 cards")
+    page.clock.run_for(181_000)
+    expect(page.locator("#reportMessage")).to_contain_text("Three minutes and still no draft")
+    expect(page.locator("#reportOutput")).to_have_value(REPORT_DIGEST)
+    page.close()
+
 
 def main():
     prefix = "QA-Scroll-" + uuid.uuid4().hex[:10]
@@ -92,6 +211,7 @@ def main():
         with sync_playwright() as p:
             browser = p.chromium.launch()
             check_subtask_editing(browser, editing_id, editing_title)
+            check_report_dialog(browser, evidence)
             page = browser.new_page(
                 viewport={"width": 1440, "height": 800}, reduced_motion="reduce"
             )
@@ -178,7 +298,7 @@ def main():
             assert not errors, errors
             browser.close()
         print(
-            "PASS: subtask composer keeps focus, rapid checks without 409, no reveal replay on SSE, uncompressed cards, wheel/keyboard Done scrolling, SSE scroll retention, notes-only and real card expansion, both views/themes, desktop/390px."
+            "PASS: report dialog waiting/draft/evidence/worker-missing/failure/timeout, subtask composer keeps focus, rapid checks without 409, no reveal replay on SSE, uncompressed cards, wheel/keyboard Done scrolling, SSE scroll retention, notes-only and real card expansion, both views/themes, desktop/390px."
         )
         print("Evidence:", evidence)
     finally:

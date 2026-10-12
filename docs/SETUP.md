@@ -142,6 +142,21 @@ The easiest route is `/todo-board:reconciler` in Claude Code. To do it by hand:
 
 To check on it, run `~/.local/bin/board-reconciler --status`. To stop it, run `scripts/install-board-reconciler --uninstall`. That keeps its state, logs and your config file. [RECONCILER.md](RECONCILER.md) has the config fields and the full rules.
 
+## Optional: report writer
+
+**Generate standup**, **Weekly report** and `todo report` ask a host worker to turn the card
+evidence into talking points with Claude. It uses your existing Claude Code login, in the same
+isolated mode as the reconciler, and never writes to the board beyond the report job.
+
+```bash
+make build-reporter
+scripts/install-todo-reporter --enable
+```
+
+`--disable` stops it and `--uninstall` removes it. Logs go to `~/.local/log/todo-reporter.log`.
+Without the worker, reports still work: you get the evidence digest, labeled as such, instead of
+an AI draft.
+
 ## Optional: Claude Desktop
 
 The regular Claude Desktop chat app can use the board through a local MCP server:

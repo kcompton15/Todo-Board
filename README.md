@@ -73,6 +73,23 @@ $ todo find "csv dialog"
 
 The title of #12 carries `PROJ-41`, so the second `add` attaches to it. `web_app` is stored as `Web App`, and `find` returns both cards because any word can match.
 
+## Standup and weekly reports
+
+**Generate standup** and **Weekly report** turn the recorded work in a date range into a short list of talking points you can speak from. A standup is three to six bullets; a weekly status groups outcomes for a department audience. Each point cites the cards behind it, sub-bullets appear only for facts you would otherwise look up (an MR number, a date, who owns a blocker), and the text stays editable before you copy it. The standup defaults to the previous working day through today; the weekly report defaults to last Monday through Sunday.
+
+The board does not call a model itself. Generate queues a report job, and a host worker, `todo-reporter`, claims it, sends the card evidence to Claude through the same isolated `claude -p` invocation the reconciler uses (your existing Claude Code login, no tools, hooks, memory or MCP servers), checks that every point cites a card from the evidence, and posts the Markdown back. The weekly audience rules are `styleRules` in `internal/reportwriter/prompt.go`; edit them to fit your audience. A weekly report usually takes 10 to 30 seconds. Install and start the worker once:
+
+```bash
+make build-reporter
+scripts/install-todo-reporter --enable
+```
+
+`--disable` stops it and `--uninstall` removes it. Its log is `~/.local/log/todo-reporter.log`.
+
+The worker needs the `claude` CLI on your PATH and logged in. The installer is macOS-only; elsewhere, run `go run ./cmd/todo-reporter` yourself. Only Claude Code **2.1.296** is accepted, because that is the release whose isolation has been probed. Any other version fails the job with that reason and you get the digest. [docs/RECONCILER.md](docs/RECONCILER.md) covers verifying a new release.
+
+When no AI draft is possible, the dialog says why and shows the **evidence digest** instead, labeled as the digest: a grouped, de-duplicated list of what each card recorded in the range, with no model involved. That happens when the worker has not checked in for 30 seconds, when the job fails (for example, an untested Claude Code version), or after three minutes without a result. **Show evidence** swaps between the AI draft and the digest it was written from, keeping edits to each. `todo report` gives the same result on the command line.
+
 ## Command line
 
 `scripts/todo` is a small bash script (curl and jq) that talks to the HTTP API. Setup links it to `~/.local/bin/todo`.
@@ -91,11 +108,14 @@ todo block '#142' "waiting for product clarification"
 todo link 142 PROJ-123 --role required
 todo log 142 progress "API change merged"
 todo done 142
+todo report weekly --from 2026-10-05 --to 2026-10-11 > weekly.md
 ```
 
 A card argument takes `142`, `'#142'` (quote it, or the shell treats `#` as a comment) or an unambiguous ID prefix. A step argument takes its number (`3`), `'#142.3'` or an ID prefix. `todo show` and `--json` keep the full IDs. A Jira key or merge request counts for attach when it is passed with `--link`, appears in the title as a merge request, or appears in the title as a key from a project in [`TODO_ISSUE_PREFIXES`](#jira-keys-in-card-titles). `todo find` prints the best 10 matches and how many more matched.
 
 Run `todo help` for every command. When the board is unreachable, the CLI exits with code 3 and one short message so agent sessions can carry on.
+
+`todo report standup|weekly [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--project P]...` prints the AI talking points with the same default dates as the board. It waits up to three minutes (`TODO_REPORT_TIMEOUT` seconds). If the report writer is not running, fails or times out, it prints the evidence digest to stdout, the reason to stderr, and exits `4`.
 
 `todo import` reads a plain-text format: `%project`, `#tag`, `!1` to `!3` for priority and `@lane`, with indented lines as subtasks.
 
@@ -142,6 +162,8 @@ TODO_JIRA_SITE=yourcompany.atlassian.net TODO_ISSUE_PREFIXES=PROJ,OPS docker com
 **Weekday notifier.** A launchd agent that sends a macOS notification at 09:00 on weekdays: a Monday digest of blocked cards, `remind:` lines in notes, idle probes, and work left in progress for more than five days. Install it with `scripts/install-board-notifier`. See [docs/SETUP.md](docs/SETUP.md#optional-weekday-notifier).
 
 **Reconciler.** A launchd agent that closes cards when the evidence is in: required merge requests merged, a Jira issue Done, or a review you approved. It only reads GitLab and Jira, and only writes to your board. It needs `glab`, a Jira API token in the Keychain, and `~/.config/todo-board/reconciler.json`. See [docs/RECONCILER.md](docs/RECONCILER.md).
+
+**Report writer.** A launchd agent, `todo-reporter`, that turns report jobs into Claude-written talking points using your Claude Code login. Without it, reports fall back to the evidence digest. See [Standup and weekly reports](#standup-and-weekly-reports).
 
 **Claude Desktop.** `make install-claude-desktop` builds a local MCP server named `todo-board` and adds it to the Claude Desktop config. Its `create_task` attaches to an open card that already covers the same Jira key or merge request unless `onMatch` says otherwise, and every `id` accepts a card number. It works only while your Mac and the container are running. See [docs/AGENT-INTEGRATION.md](docs/AGENT-INTEGRATION.md#claude-desktop-chat).
 

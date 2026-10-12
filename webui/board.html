@@ -1280,16 +1280,19 @@
       .dialog-body > * {
         margin-block: 0;
       }
-      .report-output {
-        width: 100%;
+      .report-output > textarea {
         min-height: 280px;
-        padding: 9px 10px;
-        border: 1px solid var(--line);
-        border-radius: 9px;
-        background-color: var(--surface-2);
         color: var(--ink);
         font: 12px/1.55 var(--mono);
-        resize: vertical;
+      }
+      .report-output > label[data-view="draft"] {
+        color: var(--ok);
+      }
+      .report-output > label[data-view="digest"] {
+        color: var(--ink);
+      }
+      #reportMessage[data-tone="problem"] {
+        color: var(--ink);
       }
       .incomplete {
         color: var(--danger);
@@ -1478,17 +1481,27 @@
             placeholder="All projects; or comma-separated project names"
           >
         </div>
-        <p id="reportMessage" class="hint" aria-live="polite"></p>
-        <textarea
-          id="reportOutput"
-          class="report-output"
-          rows="18"
-          aria-label="Editable generated report"
-        ></textarea>
+        <p id="reportMessage" class="hint" role="status"></p>
+        <div class="field report-output">
+          <label for="reportOutput" id="reportOutputLabel"
+          >Report</label><textarea
+            id="reportOutput"
+            rows="18"
+          ></textarea>
+        </div>
       </div>
       <div class="dialog-foot">
         <button class="btn primary" id="runReport" type="button">
           Generate
+        </button>
+        <button
+          class="btn"
+          id="reportEvidence"
+          type="button"
+          aria-pressed="false"
+          disabled
+        >
+          Show evidence
         </button><span class="spacer"></span><button
           class="btn"
           id="copyReport"
@@ -1962,7 +1975,10 @@
         "click",
         () => $("activityDialog").close(),
       );
-      let reportKind = "standup";
+      let reportKind = "standup",
+        reportRun = 0,
+        reportState = { draft: null, digest: "", view: "" };
+      const REPORT_WORKER_FRESH_MS = 30000, REPORT_TIMEOUT_MS = 180000;
       const chicagoDate = (date) =>
         new Intl.DateTimeFormat("en-CA", {
           timeZone: "America/Chicago",
@@ -1970,6 +1986,67 @@
           month: "2-digit",
           day: "2-digit",
         }).format(date);
+      const plural = (count, word) =>
+        `${count} ${word}${count === 1 ? "" : "s"}`;
+      function setReportMessage(text, problem = false) {
+        const message = $("reportMessage");
+        message.textContent = text;
+        if (problem) message.dataset.tone = "problem";
+        else delete message.dataset.tone;
+      }
+      function saveReportEdits() {
+        if (reportState.view === "draft") {
+          reportState.draft = $("reportOutput").value;
+        } else if (reportState.view === "digest") {
+          reportState.digest = $("reportOutput").value;
+        }
+      }
+      function showReportView(view) {
+        const label = $("reportOutputLabel"),
+          toggle = $("reportEvidence");
+        reportState.view = view;
+        if (view) label.dataset.view = view;
+        else delete label.dataset.view;
+        $("reportOutput").value = view === "draft"
+          ? reportState.draft
+          : view === "digest"
+          ? reportState.digest
+          : "";
+        label.textContent = view === "draft"
+          ? "AI draft"
+          : view === "digest"
+          ? "Evidence digest (not AI-written)"
+          : "Report";
+        toggle.disabled = reportState.draft === null;
+        toggle.classList.toggle("active", view === "digest");
+        toggle.setAttribute("aria-pressed", String(view === "digest"));
+      }
+      function resetReport() {
+        reportRun++;
+        reportState = { draft: null, digest: "", view: "" };
+        showReportView("");
+        $("runReport").disabled = false;
+      }
+      function showReportDigest(reason) {
+        showReportView("digest");
+        setReportMessage(
+          reason +
+            " Showing the evidence digest instead; Generate to try again.",
+          true,
+        );
+      }
+      function workerSilence(lastClaimAt) {
+        const at = lastClaimAt ? Date.parse(lastClaimAt) : NaN;
+        if (Number.isNaN(at)) {
+          return "The report writer has not checked in since the board started.";
+        }
+        const elapsed = Date.now() - at;
+        if (elapsed < REPORT_WORKER_FRESH_MS) return "";
+        const minutes = Math.round(elapsed / 60000);
+        return "The report writer last checked in " +
+          (minutes < 1 ? "under a minute" : plural(minutes, "minute")) +
+          " ago and seems to be off the clock.";
+      }
       function openReport(kind) {
         reportKind = kind;
         const now = new Date();
@@ -1990,10 +2067,116 @@
           : "Generate weekly report";
         $("reportStart").value = chicagoDate(start);
         $("reportEnd").value = chicagoDate(end);
-        $("reportOutput").value = "";
-        $("reportMessage").textContent =
-          "Reports use recorded work evidence only; edit the Markdown before sharing.";
+        resetReport();
+        setReportMessage(
+          "Claude drafts talking points from recorded work evidence only. Edit before sharing.",
+        );
         $("reportDialog").showModal();
+      }
+      async function generateReport() {
+        resetReport();
+        const run = reportRun,
+          current = () => run === reportRun && $("reportDialog").open;
+        const projects = $("reportProjects").value.split(",").map((
+          value,
+        ) => value.trim()).filter(Boolean);
+        const body = JSON.stringify({
+          kind: reportKind,
+          start: $("reportStart").value,
+          end: $("reportEnd").value,
+          projects,
+        });
+        $("runReport").disabled = true;
+        setReportMessage(
+          "Checking whether the report writer is awake…",
+        );
+        try {
+          const worker = await api("/api/reports/worker");
+          if (!current()) return;
+          const silence = workerSilence(worker.lastClaimAt);
+          if (silence) {
+            const preview = await api("/api/reports/preview", {
+              method: "POST",
+              body,
+            });
+            if (!current()) return;
+            reportState.digest = preview.markdown;
+            showReportView("digest");
+            setReportMessage(
+              silence +
+                " No AI draft this time, so this is the evidence digest. Start the writer with scripts/install-todo-reporter --enable, then Generate again.",
+              true,
+            );
+            return;
+          }
+          let job = await api("/api/reports/jobs", {
+            method: "POST",
+            body,
+          });
+          if (!current()) return;
+          reportState.digest = job.digestMarkdown;
+          const started = Date.now();
+          while (job.state === "queued" || job.state === "running") {
+            const elapsed = Date.now() - started;
+            if (elapsed >= REPORT_TIMEOUT_MS) {
+              showReportDigest(
+                "Three minutes and still no draft, so we stopped waiting by the mailbox. The writer may be stuck; its log is ~/.local/log/todo-reporter.log.",
+              );
+              return;
+            }
+            setReportMessage(
+              `Turning ${
+                plural(job.cardCount, "card")
+              } into something you can say out loud… ${
+                Math.round(elapsed / 1000)
+              } s`,
+            );
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            if (!current()) return;
+            try {
+              job = await api(
+                `/api/reports/jobs/${encodeURIComponent(job.id)}`,
+              );
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              if (!current()) return;
+              showReportDigest(
+                "The board lost track of this report, probably because it restarted.",
+              );
+              return;
+            }
+            if (!current()) return;
+          }
+          if (job.state === "done") {
+            reportState.draft = job.markdown;
+            showReportView("draft");
+            setReportMessage(
+              `Talking points from ${
+                plural(job.cardCount, "card")
+              }. Edit before sharing; Show evidence swaps in the digest behind them.`,
+            );
+            return;
+          }
+          showReportDigest(
+            `The report writer gave up: ${
+              job.error || "it gave no reason"
+            }.`,
+          );
+        } catch (error) {
+          if (!current()) return;
+          if (reportState.digest) {
+            showReportDigest(
+              `Lost contact while waiting: ${error.message}.`,
+            );
+          } else {
+            setReportMessage(
+              "Could not generate report: " + error.message,
+              true,
+            );
+          }
+        } finally {
+          if (run === reportRun) $("runReport").disabled = false;
+        }
       }
       $("standupButton").addEventListener(
         "click",
@@ -2007,39 +2190,27 @@
         "click",
         () => $("reportDialog").close(),
       );
-      $("runReport").addEventListener("click", async () => {
-        try {
-          $("reportMessage").textContent =
-            "Generating from recorded evidence…";
-          const projects = $("reportProjects").value.split(",").map((
-            value,
-          ) => value.trim()).filter(Boolean);
-          const report = await api("/api/reports/preview", {
-            method: "POST",
-            body: JSON.stringify({
-              kind: reportKind,
-              start: $("reportStart").value,
-              end: $("reportEnd").value,
-              projects,
-            }),
-          });
-          $("reportOutput").value = report.markdown;
-          $("reportMessage").textContent = (report.partialLegacyHistory
-            ? "Earlier pre-upgrade history is incomplete. "
-            : "") +
-            report.sourceRecordIds.length + " source record(s) used.";
-        } catch (error) {
-          $("reportMessage").textContent =
-            "Could not generate report: " + error.message;
-        }
+      $("reportDialog").addEventListener("close", resetReport);
+      $("runReport").addEventListener("click", generateReport);
+      $("reportEvidence").addEventListener("click", () => {
+        saveReportEdits();
+        showReportView(
+          reportState.view === "digest" ? "draft" : "digest",
+        );
       });
       $("copyReport").addEventListener("click", async () => {
         try {
           await navigator.clipboard.writeText($("reportOutput").value);
-          $("reportMessage").textContent = "Copied Markdown.";
+          setReportMessage(
+            reportState.view === "digest"
+              ? "Copied the evidence digest."
+              : "Copied Markdown.",
+          );
         } catch {
-          $("reportMessage").textContent =
-            "Copy failed; select the editable text and copy it manually.";
+          setReportMessage(
+            "Copy failed; select the editable text and copy it manually.",
+            true,
+          );
         }
       });
 

@@ -2,6 +2,7 @@ package scripts_test
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -519,5 +521,253 @@ func TestCLIFindShowsTopTen(t *testing.T) {
 	}
 	if lines[11] != `+3 more matches (todo find "lint gate" --json)` {
 		t.Fatalf("find tail = %q", lines[11])
+	}
+}
+
+type cliResult struct {
+	stdout, stderr string
+	code           int
+}
+
+func runCLIReport(t *testing.T, url string, env []string, args ...string) cliResult {
+	t.Helper()
+	cmd := exec.Command("bash", append([]string{"./todo", "report"}, args...)...)
+	cmd.Env = append(append(os.Environ(), "TODO_URL="+url), env...)
+	var stdout, stderr strings.Builder
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := cmd.Run()
+	result := cliResult{stdout: stdout.String(), stderr: stderr.String()}
+	var exitErr *exec.ExitError
+	switch {
+	case err == nil:
+	case errors.As(err, &exitErr):
+		result.code = exitErr.ExitCode()
+	default:
+		t.Fatalf("todo report %v: %v", args, err)
+	}
+	return result
+}
+
+func requireCLITools(t *testing.T) {
+	t.Helper()
+	for _, tool := range []string{"bash", "curl", "jq"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("CLI integration requires %s", tool)
+		}
+	}
+}
+
+func writeTestJSON(t *testing.T, w http.ResponseWriter, value any) {
+	t.Helper()
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(value); err != nil {
+		t.Errorf("encode response: %v", err)
+	}
+}
+
+type fakeReportBoard struct {
+	t          *testing.T
+	mu         sync.Mutex
+	lastClaim  any
+	states     []map[string]any
+	polls      int
+	requests   []map[string]any
+	missingJob bool
+}
+
+func (f *fakeReportBoard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/api/reports/worker":
+		writeTestJSON(f.t, w, map[string]any{"lastClaimAt": f.lastClaim})
+	case r.Method == http.MethodPost && (r.URL.Path == "/api/reports/jobs" || r.URL.Path == "/api/reports/preview"):
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			f.t.Errorf("decode %s: %v", r.URL.Path, err)
+		}
+		body["path"] = r.URL.Path
+		f.requests = append(f.requests, body)
+		if r.URL.Path == "/api/reports/preview" {
+			writeTestJSON(f.t, w, map[string]any{"markdown": "# Preview digest"})
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		writeTestJSON(f.t, w, map[string]any{"id": "rjob", "state": "queued", "digestMarkdown": "# Job digest", "cardCount": 2})
+	case r.Method == http.MethodGet && r.URL.Path == "/api/reports/jobs/rjob":
+		if f.missingJob {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			if _, err := w.Write([]byte(`{"error":"report job not found"}`)); err != nil {
+				f.t.Errorf("write 404: %v", err)
+			}
+			return
+		}
+		state := f.states[min(f.polls, len(f.states)-1)]
+		f.polls++
+		writeTestJSON(f.t, w, state)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (f *fakeReportBoard) takeRequests() []map[string]any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	requests := f.requests
+	f.requests = nil
+	return requests
+}
+
+func TestCLIReportPrintsDraftWhenWorkerFinishes(t *testing.T) {
+	requireCLITools(t)
+	board := &fakeReportBoard{t: t, lastClaim: time.Now().UTC().Format(time.RFC3339Nano), states: []map[string]any{
+		{"id": "rjob", "state": "running"},
+		{"id": "rjob", "state": "done", "markdown": "- Shipped the thing (#4)", "cardCount": 1},
+	}}
+	api := httptest.NewServer(board)
+	defer api.Close()
+	got := runCLIReport(t, api.URL, nil, "weekly", "--from", "2026-10-05", "--to", "2026-10-11", "--project", "Billing", "--project", "mobile-app")
+	if got.code != 0 || got.stdout != "- Shipped the thing (#4)\n" || got.stderr != "" {
+		t.Fatalf("report = %#v", got)
+	}
+	want := map[string]any{"path": "/api/reports/jobs", "kind": "weekly", "start": "2026-10-05", "end": "2026-10-11", "projects": []any{"Billing", "mobile-app"}}
+	if requests := board.takeRequests(); len(requests) != 1 || fmt.Sprint(requests[0]) != fmt.Sprint(want) {
+		t.Fatalf("requests = %#v", requests)
+	}
+}
+
+func TestCLIReportDefaultsMatchBoardDialog(t *testing.T) {
+	requireCLITools(t)
+	board := &fakeReportBoard{t: t, lastClaim: time.Now().UTC().Format(time.RFC3339Nano), states: []map[string]any{{"id": "rjob", "state": "done", "markdown": "- ok (#1)"}}}
+	api := httptest.NewServer(board)
+	defer api.Close()
+	chicago, err := time.LoadLocation("America/Chicago")
+	if err != nil {
+		t.Skipf("tzdata unavailable: %v", err)
+	}
+	now := time.Now().In(chicago)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, chicago)
+	back := map[time.Weekday]int{time.Monday: 3, time.Sunday: 2}[today.Weekday()]
+	if back == 0 {
+		back = 1
+	}
+	weekStart := today.AddDate(0, 0, -((int(today.Weekday())+6)%7 + 7))
+	for kind, dates := range map[string][2]string{
+		"standup": {today.AddDate(0, 0, -back).Format(time.DateOnly), today.Format(time.DateOnly)},
+		"weekly":  {weekStart.Format(time.DateOnly), weekStart.AddDate(0, 0, 6).Format(time.DateOnly)},
+	} {
+		if got := runCLIReport(t, api.URL, nil, kind); got.code != 0 {
+			t.Fatalf("%s report = %#v", kind, got)
+		}
+		if requests := board.takeRequests(); len(requests) != 1 || requests[0]["start"] != dates[0] || requests[0]["end"] != dates[1] {
+			t.Fatalf("%s requests = %#v; want %v", kind, requests, dates)
+		}
+	}
+}
+
+func TestCLIReportFallsBackToDigest(t *testing.T) {
+	requireCLITools(t)
+	fresh := time.Now().UTC().Format(time.RFC3339Nano)
+	cases := []struct {
+		name    string
+		board   *fakeReportBoard
+		env     []string
+		digest  string
+		message string
+	}{
+		{"no worker", &fakeReportBoard{lastClaim: nil}, nil, "# Preview digest", "has not checked in since the board started (start it with scripts/install-todo-reporter --enable)"},
+		{"stale worker", &fakeReportBoard{lastClaim: time.Now().Add(-2 * time.Minute).Format(time.RFC3339)}, nil, "# Preview digest", "last checked in 1"},
+		{"failed job", &fakeReportBoard{lastClaim: fresh, states: []map[string]any{{"id": "rjob", "state": "failed", "error": "Claude version has not been isolation-verified"}}}, nil, "# Job digest", "the report writer failed: Claude version has not been isolation-verified"},
+		{"timeout", &fakeReportBoard{lastClaim: fresh, states: []map[string]any{{"id": "rjob", "state": "running"}}}, []string{"TODO_REPORT_TIMEOUT=1"}, "# Job digest", "no report after 1 s"},
+		{"lost job", &fakeReportBoard{lastClaim: fresh, missingJob: true}, nil, "# Job digest", "the board lost report job rjob"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.board.t = t
+			api := httptest.NewServer(tc.board)
+			defer api.Close()
+			got := runCLIReport(t, api.URL, tc.env, "standup", "--from", "2026-10-09", "--to", "2026-10-12")
+			if got.code != 4 || got.stdout != tc.digest+"\n" || !strings.Contains(got.stderr, tc.message) || !strings.Contains(got.stderr, "printed the evidence digest instead") {
+				t.Fatalf("report = %#v", got)
+			}
+		})
+	}
+}
+
+func TestCLIReportBoardUnreachableAndBadInput(t *testing.T) {
+	requireCLITools(t)
+	api := httptest.NewServer(http.NotFoundHandler())
+	url := api.URL
+	api.Close()
+	if got := runCLIReport(t, url, nil, "weekly"); got.code != 3 || !strings.Contains(got.stderr, "board unreachable") || got.stdout != "" {
+		t.Fatalf("unreachable = %#v", got)
+	}
+	if got := runCLIReport(t, url, nil, "monthly"); got.code != 1 || !strings.Contains(got.stderr, "invalid report kind 'monthly'") {
+		t.Fatalf("bad kind = %#v", got)
+	}
+	if got := runCLIReport(t, url, []string{"TODO_REPORT_TIMEOUT=soon"}, "weekly"); got.code != 1 || !strings.Contains(got.stderr, "TODO_REPORT_TIMEOUT") {
+		t.Fatalf("bad timeout = %#v", got)
+	}
+}
+
+func TestCLIReportUsesRealJobQueue(t *testing.T) {
+	requireCLITools(t)
+	s, err := store.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := httptest.NewServer(httpapi.New(s, httpapi.NewHub(), nil, nil).Handler())
+	defer api.Close()
+	missing := runCLIReport(t, api.URL, nil, "weekly", "--from", "2026-10-05", "--to", "2026-10-11")
+	if missing.code != 4 || !strings.HasPrefix(missing.stdout, "# Weekly report (2026-10-05 through 2026-10-11)") {
+		t.Fatalf("missing worker = %#v", missing)
+	}
+	post := func(path, body string) (int, map[string]any) {
+		t.Helper()
+		response, err := http.Post(api.URL+path, "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := response.Body.Close(); err != nil {
+				t.Errorf("close %s: %v", path, err)
+			}
+		}()
+		var decoded map[string]any
+		if response.StatusCode == http.StatusOK {
+			if err := json.NewDecoder(response.Body).Decode(&decoded); err != nil {
+				t.Fatalf("decode %s: %v", path, err)
+			}
+		}
+		return response.StatusCode, decoded
+	}
+	if status, _ := post("/api/reports/jobs/claim", "{}"); status != http.StatusNoContent {
+		t.Fatalf("empty claim = %d", status)
+	}
+	worker := make(chan error, 1)
+	go func() {
+		deadline := time.Now().Add(20 * time.Second)
+		for time.Now().Before(deadline) {
+			status, job := post("/api/reports/jobs/claim", "{}")
+			if status == http.StatusOK {
+				status, _ = post(fmt.Sprintf("/api/reports/jobs/%v/complete", job["id"]), `{"markdown":"- Quiet week (#1)","cardCount":1}`)
+				if status != http.StatusOK {
+					worker <- fmt.Errorf("complete = %d", status)
+					return
+				}
+				worker <- nil
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		worker <- errors.New("no job claimed")
+	}()
+	got := runCLIReport(t, api.URL, nil, "weekly", "--from", "2026-10-05", "--to", "2026-10-11")
+	if err := <-worker; err != nil {
+		t.Fatal(err)
+	}
+	if got.code != 0 || got.stdout != "- Quiet week (#1)\n" {
+		t.Fatalf("report = %#v", got)
 	}
 }

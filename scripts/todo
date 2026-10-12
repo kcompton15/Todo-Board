@@ -88,6 +88,32 @@ resolve_subtask() {
 
 card_ref() { api GET "/api/tasks/$1" | jq -r "$JQ_REFS card_ref"; }
 
+# Prints "start end" in Chicago dates, matching the board's report dialog defaults.
+report_dates() {
+  TZ=America/Chicago jq -rn --arg kind "$1" '
+    (now | localtime) as $t | ([$t[0], $t[1], $t[2], 12, 0, 0, 0, 0] | mktime) as $today |
+    def day($offset): ($today + $offset * 86400) | strftime("%Y-%m-%d");
+    if $kind == "standup" then
+      "\(day(-(if $t[6] == 1 then 3 elif $t[6] == 0 then 2 else 1 end))) \(day(0))"
+    else (-((($t[6] + 6) % 7) + 7)) as $start | "\(day($start)) \(day($start + 6))" end'
+}
+
+report_worker_silence() {
+  jq -r --argjson fresh 30 '
+    def epoch: capture("^(?<d>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(\\.[0-9]+)?(?<z>Z|(?<s>[+-])(?<h>[0-9]{2}):(?<m>[0-9]{2}))$")
+      | ((.d + "Z") | fromdateiso8601) - (if .z == "Z" then 0 else (if .s == "+" then 1 else -1 end) * ((.h | tonumber) * 3600 + (.m | tonumber) * 60) end);
+    if .lastClaimAt == null then "the report writer has not checked in since the board started"
+    else (now - (.lastClaimAt | epoch)) as $age
+      | if $age < $fresh then empty else "the report writer last checked in \($age | floor) s ago" end
+    end'
+}
+
+report_fallback() {
+  printf '%s\n' "$2"
+  printf 'todo: %s; printed the evidence digest instead\n' "$1" >&2
+  exit 4
+}
+
 print_table() {
   jq -r "$JQ_REFS"'
     if (.tasks|length)==0 then "No tasks found."
@@ -122,6 +148,9 @@ todo ops [file]
 todo context
 todo history [card] [--json]
 todo log <card> <progress|decision|blocker|blocker_resolved|next_step|review_delivered> "text" [--sub <step>]
+todo report standup|weekly [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--project P]...
+  (prints Claude's talking points; if the report writer is not running, fails,
+   or takes over 3 minutes, prints the evidence digest and exits 4)
 todo add also accepts [--link KEY_OR_URL]... [--agent-context TEXT] [--new]
   (an open card that already covers a Jira key or MR gets a new step instead;
    --new always creates a separate card)
@@ -129,7 +158,8 @@ todo add also accepts [--link KEY_OR_URL]... [--agent-context TEXT] [--new]
 <card> is a number (142 or '#142') or a task ID prefix.
 <step> is a step number (3 or '#142.3') or a subtask ID prefix.
 
-Environment: TODO_URL (default http://127.0.0.1:7337), TODO_ACTOR (default cli)
+Environment: TODO_URL (default http://127.0.0.1:7337), TODO_ACTOR (default cli),
+  TODO_REPORT_TIMEOUT (seconds todo report waits, default 180)
 EOF
 }
 
@@ -329,6 +359,48 @@ case "$command_name" in
     current=$(api GET "/api/tasks/$id")
     body=$(jq -n --arg kind "$kind" --arg text "$text" --arg sub "$sub" '{kind:$kind,text:$text,subtaskId:$sub}')
     api POST "/api/tasks/$id/work-log" "$body" application/json "$(printf '%s' "$current" | jq -r .revision)" | jq -r --arg ref "$(printf '%s' "$current" | jq -r "$JQ_REFS card_ref")" '"logged \(.kind) on \($ref)"'
+    ;;
+  report)
+    [[ $# -ge 1 ]] || die "report requires standup or weekly"
+    kind="$1"; shift
+    case "$kind" in standup|weekly) ;; *) die "invalid report kind '$kind' (standup or weekly)" ;; esac
+    dates=$(report_dates "$kind"); from="${dates% *}"; to="${dates#* }"
+    projects='[]'
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --from) [[ $# -ge 2 ]] || die "--from requires a date"; from="$2"; shift 2 ;;
+        --to) [[ $# -ge 2 ]] || die "--to requires a date"; to="$2"; shift 2 ;;
+        --project) [[ $# -ge 2 ]] || die "--project requires a value"; projects=$(jq -cn --argjson projects "$projects" --arg project "$2" '$projects+[$project]'); shift 2 ;;
+        *) die "unknown report option '$1'" ;;
+      esac
+    done
+    timeout="${TODO_REPORT_TIMEOUT:-180}"
+    [[ "$timeout" =~ ^[0-9]+$ ]] || die "TODO_REPORT_TIMEOUT must be a whole number of seconds"
+    body=$(jq -cn --arg kind "$kind" --arg start "$from" --arg end "$to" --argjson projects "$projects" '{kind:$kind,start:$start,end:$end,projects:$projects}')
+    worker=$(api GET /api/reports/worker)
+    silence=$(printf '%s' "$worker" | report_worker_silence)
+    if [[ -n "$silence" ]]; then
+      digest=$(api POST /api/reports/preview "$body" | jq -r .markdown)
+      report_fallback "$silence (start it with scripts/install-todo-reporter --enable)" "$digest"
+    fi
+    job=$(api POST /api/reports/jobs "$body")
+    id=$(printf '%s' "$job" | jq -r .id)
+    digest=$(printf '%s' "$job" | jq -r .digestMarkdown)
+    deadline=$((SECONDS + timeout))
+    while :; do
+      state=$(printf '%s' "$job" | jq -r .state)
+      case "$state" in
+        done) printf '%s\n' "$job" | jq -r .markdown; exit 0 ;;
+        failed) report_fallback "the report writer failed: $(printf '%s' "$job" | jq -r '.error // "no reason given"')" "$digest" ;;
+      esac
+      [[ $SECONDS -lt $deadline ]] || report_fallback "no report after ${timeout} s; the writer may be stuck (see ~/.local/log/todo-reporter.log)" "$digest"
+      sleep 1
+      if job=$(api GET "/api/reports/jobs/$(encode "$id")"); then :; else
+        status=$?
+        [[ $status -ne 3 ]] || exit 3
+        report_fallback "the board lost report job $id" "$digest"
+      fi
+    done
     ;;
   context)
     api GET /api/tasks | jq -r --argjson budget 1900 --argjson reserve 500 "$JQ_REFS"'
