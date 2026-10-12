@@ -101,6 +101,7 @@ func (s *Store) load() error {
 		}
 		s.tasks[task.ID] = cloneTask(normalized)
 	}
+	backfillActivity(s.tasks, s.history, s.completeHistorySince)
 	next, err := assignMissingNumbers(s.tasks, state.NextNumber)
 	if err != nil {
 		return fmt.Errorf("parse %s: %w", s.path, err)
@@ -172,7 +173,9 @@ func (s *Store) CreateMany(inputs []TaskInput, sourceOverride string, options ..
 
 func (s *Store) Replace(id string, input TaskInput, options ...Mutation) (Task, error) {
 	var result Task
+	var committed map[string]Task
 	err := s.transact(func(tasks map[string]Task) error {
+		committed = tasks
 		current, ok := tasks[id]
 		if !ok {
 			return ErrNotFound
@@ -205,12 +208,16 @@ func (s *Store) Replace(id string, input TaskInput, options ...Mutation) (Task, 
 		tasks[id] = result
 		return nil
 	}, options...)
-	return cloneTask(result), err
+	if err != nil {
+		return cloneTask(result), err
+	}
+	return cloneTask(committed[id]), nil
 }
 
 func (s *Store) Patch(id string, patch TaskPatch, options ...Mutation) (Task, error) {
-	var result Task
+	var committed map[string]Task
 	err := s.transact(func(tasks map[string]Task) error {
+		committed = tasks
 		current, ok := tasks[id]
 		if !ok {
 			return ErrNotFound
@@ -220,10 +227,12 @@ func (s *Store) Patch(id string, patch TaskPatch, options ...Mutation) (Task, er
 			return err
 		}
 		tasks[id] = updated
-		result = updated
 		return nil
 	}, options...)
-	return cloneTask(result), err
+	if err != nil {
+		return Task{}, err
+	}
+	return cloneTask(committed[id]), nil
 }
 
 func (s *Store) Delete(id string, options ...Mutation) error {
@@ -493,6 +502,7 @@ func (s *Store) transactWithHistory(change func(map[string]Task, *[]HistoryRecor
 	if err := change(candidate, &history); err != nil {
 		return err
 	}
+	stampActivity(s.tasks, candidate, option.Actor, s.now())
 	events, err := s.prepareChanges(candidate, option.Actor)
 	if err != nil {
 		return err

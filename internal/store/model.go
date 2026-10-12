@@ -46,7 +46,9 @@ type Task struct {
 	Order         float64   `json:"order"`
 	CreatedAt     time.Time `json:"createdAt"`
 	UpdatedAt     time.Time `json:"updatedAt"`
-	Subtasks      []Subtask `json:"subtasks"`
+	// ActivityAt ignores reorders and the reconciler's link refreshes; see stampActivity.
+	ActivityAt time.Time `json:"activityAt"`
+	Subtasks   []Subtask `json:"subtasks"`
 	// NextSubtaskNumber keeps step numbers from being reused after a step is deleted.
 	NextSubtaskNumber int `json:"nextSubtaskNumber"`
 }

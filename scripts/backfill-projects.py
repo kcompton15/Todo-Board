@@ -23,7 +23,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def fold_key(value):
-    return re.sub(r"[\s_-]+", "-", value.lower()).strip("-")
+    return re.sub(r"[\s_-]+", "", value.lower())
 
 
 def base_url():

@@ -5,19 +5,13 @@ import (
 	"unicode"
 )
 
-// foldKey lowercases and collapses runs of spaces, '_' and '-' into one '-'.
+// foldKey lowercases and drops spaces, '_' and '-', so "Web App" and "WebApp" match.
 func foldKey(value string) string {
 	var b strings.Builder
-	pending := false
 	for _, r := range strings.ToLower(value) {
 		if r == '_' || r == '-' || unicode.IsSpace(r) {
-			pending = true
 			continue
 		}
-		if pending && b.Len() > 0 {
-			b.WriteByte('-')
-		}
-		pending = false
 		b.WriteRune(r)
 	}
 	return b.String()

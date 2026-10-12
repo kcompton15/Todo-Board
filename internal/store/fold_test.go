@@ -4,13 +4,14 @@ import "testing"
 
 func TestFoldKey(t *testing.T) {
 	cases := map[string]string{
-		"Web App":    "web-app",
-		"web-app":    "web-app",
-		"  Web__App": "web-app",
-		"web - app-": "web-app",
+		"Web App":    "webapp",
+		"web-app":    "webapp",
+		"  Web__App": "webapp",
+		"web - app-": "webapp",
+		"WebApp":     "webapp",
 		"API":        "api",
 		"":           "",
-		"todo-board": "todo-board",
+		"todo-board": "todoboard",
 	}
 	for in, want := range cases {
 		if got := foldKey(in); got != want {
