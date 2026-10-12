@@ -7,7 +7,10 @@ printf '\n'
 
 todo_bin="$plugin_root/../scripts/todo"
 [[ -x "$todo_bin" ]] || todo_bin=$(command -v todo 2>/dev/null || printf '%s' "$HOME/.local/bin/todo")
-if context=$("$todo_bin" context 2>/dev/null); then
+cwd=""
+[[ -t 0 ]] || cwd=$(jq -r '.cwd // empty' 2>/dev/null) || cwd=""
+[[ -d "$cwd" ]] || cwd="$PWD"
+if context=$("$todo_bin" context --cwd "$cwd" 2>/dev/null); then
   printf '%s\n' "$context"
 else
   printf '## Task board unreachable at %s. Mention it once if board work comes up, then carry on.\n' \

@@ -39,6 +39,26 @@ encode() { jq -rn --arg value "$1" '$value|@uri'; }
 JQ_REFS='def card_ref: if (.number // 0) > 0 then "#\(.number)" else .id end;
   def step_ref($card): if (.number // 0) > 0 and ($card // 0) > 0 then "#\($card).\(.number)" else .id end;'
 
+# jq helpers: timestamps, idle days and the project key that matches directory names to board projects.
+# A name matches a project when their keys are equal, or the name starts or ends with the project's key.
+JQ_TIME='def epoch: capture("^(?<d>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(\\.[0-9]+)?(?<z>Z|(?<s>[+-])(?<h>[0-9]{2}):(?<m>[0-9]{2}))$")
+    | ((.d + "Z") | fromdateiso8601) - (if .z == "Z" then 0 else (if .s == "+" then 1 else -1 end) * ((.h | tonumber) * 3600 + (.m | tonumber) * 60) end);
+  def known_time: . != null and . != "" and (startswith("0001") | not);
+  def activity_epoch: (if (.activityAt | known_time) then .activityAt elif (.updatedAt | known_time) then .updatedAt else null end)
+    | if . == null then null else epoch end;
+  def idle_days: activity_epoch as $e | if $e == null then 0 else ((now - $e) / 86400 | floor) end;
+  def pkey: ascii_downcase | gsub("[^a-z0-9]"; "");
+  def is_mine($pk): $pk != "" and ((.project // "") | pkey) == $pk;
+  def pick_project($explicit; $names):
+    ([.tasks[].project // "" | select(. != "")] | unique) as $projects
+    | if $explicit != "" then (first($projects[] | select(pkey == ($explicit | pkey))) // $explicit)
+      else (first($names[] | pkey as $k | select($k != "") | $projects[] | select(pkey == $k))
+        // first($names[] | pkey as $k | select($k != "")
+          | [$projects[] | pkey as $p | select(($p | length) >= 3 and (($k | startswith($p)) or ($k | endswith($p))))]
+          | sort_by(-(pkey | length)) | .[0] // empty)
+        // "")
+      end;'
+
 resolve_task() {
   local prefix="$1" matches count number
   if [[ "$prefix" =~ ^#?([0-9]{1,9})$ ]]; then
@@ -88,6 +108,45 @@ resolve_subtask() {
 
 card_ref() { api GET "/api/tasks/$1" | jq -r "$JQ_REFS card_ref"; }
 
+# TODO_PROJECT, then the nearest .todo-project file, names a directory's project outright.
+explicit_project() {
+  local d="$1"
+  if [[ -n "${TODO_PROJECT:-}" ]]; then printf '%s' "$TODO_PROJECT"; return; fi
+  while [[ -n "$d" && "$d" != "/" ]]; do
+    if [[ -f "$d/.todo-project" ]]; then
+      sed -n '1{s/^[[:space:]]*//;s/[[:space:]]*$//;p;}' "$d/.todo-project"
+      return
+    fi
+    d=$(dirname "$d")
+  done
+}
+
+# JSON array of names to match against board projects, nearest first: each directory up to $HOME,
+# with the git origin's repository name right after the repository's top level.
+project_names() {
+  local dir top origin home d names=()
+  dir=$(cd "$1" 2>/dev/null && pwd -P) || { printf '[]'; return; }
+  home=$(cd "$HOME" 2>/dev/null && pwd -P) || home="$HOME"
+  top=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || top=""
+  origin=$(git -C "$dir" remote get-url origin 2>/dev/null) || origin=""
+  origin=${origin%.git}; origin=${origin##*[/:]}
+  d="$dir"
+  while [[ -n "$d" && "$d" != "/" && "$d" != "$home" ]]; do
+    names+=("${d##*/}")
+    if [[ -n "$origin" && "$d" == "$top" ]]; then names+=("$origin"); origin=""; fi
+    d=$(dirname "$d")
+  done
+  [[ -z "$origin" ]] || names+=("$origin")
+  jq -cn '$ARGS.positional' --args ${names[@]+"${names[@]}"}
+}
+
+# Prints the board project for a directory, or nothing. Never invents a name the board lacks.
+resolve_project() {
+  local dir="$1" tasks="$2"
+  printf '%s' "$tasks" | jq -r --arg explicit "$(explicit_project "$dir")" --argjson names "$(project_names "$dir")" \
+    "$JQ_TIME"' pick_project($explicit; $names)'
+}
+
 # Prints "start end" in Chicago dates, matching the board's report dialog defaults.
 report_dates() {
   TZ=America/Chicago jq -rn --arg kind "$1" '
@@ -99,9 +158,7 @@ report_dates() {
 }
 
 report_worker_silence() {
-  jq -r --argjson fresh 30 '
-    def epoch: capture("^(?<d>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(\\.[0-9]+)?(?<z>Z|(?<s>[+-])(?<h>[0-9]{2}):(?<m>[0-9]{2}))$")
-      | ((.d + "Z") | fromdateiso8601) - (if .z == "Z" then 0 else (if .s == "+" then 1 else -1 end) * ((.h | tonumber) * 3600 + (.m | tonumber) * 60) end);
+  jq -r --argjson fresh 30 "$JQ_TIME"'
     if .lastClaimAt == null then "the report writer has not checked in since the board started"
     else (now - (.lastClaimAt | epoch)) as $age
       | if $age < $fresh then empty else "the report writer last checked in \($age | floor) s ago" end
@@ -128,6 +185,7 @@ todo ls [--lane L] [--project P] [--tag T] [--kind K] [--json]
 todo find "words" [--json]   (any word matches; best first, top 10)
 todo add "title" [--lane L] [--kind work|followup|review|probe]
          [--prio 1|2|3] [--project P] [--tag T]
+         (without --project, the card files under this directory's project; see todo project)
          [--source S] [--notes TEXT] [--sub TEXT]...
 todo show <card> [--json]
 todo move <card> <backlog|today|doing|blocked|done>
@@ -145,7 +203,10 @@ todo check|uncheck <card> <step>
 todo rm <card>
 todo import [file]
 todo ops [file]
-todo context
+todo context [--cwd DIR]
+todo project [--cwd DIR]   (the board project for a directory: TODO_PROJECT, the nearest
+                            .todo-project file, else a directory or git repo name the board knows)
+todo stale [--days N] [--json]   (open cards with no real activity for N days, default 7)
 todo history [card] [--json]
 todo log <card> <progress|decision|blocker|blocker_resolved|next_step|review_delivered> "text" [--sub <step>]
 todo report standup|weekly [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--project P]...
@@ -205,14 +266,14 @@ case "$command_name" in
     ;;
   add)
     [[ $# -ge 1 ]] || die "add requires a title"
-    title="$1"; shift; lane=""; kind="work"; priority=2; project=""; tag=""; notes=""; source="cli"; subs=(); links='[]'; memo=""; on_match="attach"
+    title="$1"; shift; lane=""; kind="work"; priority=2; project=""; project_given=false; tag=""; notes=""; source="cli"; subs=(); links='[]'; memo=""; on_match="attach"
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --new) on_match="create"; shift ;;
         --lane) [[ $# -ge 2 ]] || die "--lane requires a value"; lane="$2"; shift 2 ;;
         --kind) [[ $# -ge 2 ]] || die "--kind requires a value"; kind="$2"; shift 2 ;;
         --prio|--priority) [[ $# -ge 2 ]] || die "$1 requires a value"; priority="$2"; shift 2 ;;
-        --project) [[ $# -ge 2 ]] || die "--project requires a value"; project="$2"; shift 2 ;;
+        --project) [[ $# -ge 2 ]] || die "--project requires a value"; project="$2"; project_given=true; shift 2 ;;
         --tag) [[ $# -ge 2 ]] || die "--tag requires a value"; tag="$2"; shift 2 ;;
         --notes) [[ $# -ge 2 ]] || die "--notes requires a value"; notes="$2"; shift 2 ;;
         --source) [[ $# -ge 2 ]] || die "--source requires a value"; source="$2"; shift 2 ;;
@@ -227,11 +288,12 @@ case "$command_name" in
       sub_json=$(jq -n --args '$ARGS.positional' "${subs[@]}")
     fi
     [[ -n "${TODO_ACTOR:-}" ]] || TODO_ACTOR="$source"
+    $project_given || project=$(resolve_project "$PWD" "$(api GET /api/tasks)")
     body=$(jq -n --arg title "$title" --arg lane "$lane" --arg kind "$kind" --argjson priority "$priority" --arg project "$project" --arg tag "$tag" --arg notes "$notes" --arg source "$source" --argjson subtasks "$sub_json" '{title:$title,lane:$lane,kind:$kind,priority:$priority,project:$project,tag:$tag,notes:$notes,source:$source,subtasks:$subtasks}')
     body=$(printf '%s' "$body" | jq --argjson links "$links" --arg memo "$memo" '.+{links:$links,agentContext:$memo} | if .lane=="" then del(.lane) else . end')
     api POST "/api/tasks?onMatch=$on_match" "$body" | jq -r "$JQ_REFS"'
       if .attached then .task.number as $card | "attached to \(.task | card_ref) (\(.task.title)) as \(.subtask | step_ref($card))"
-      else .tasks[0] | "created \(card_ref) [\(.lane)] \(.title)" end'
+      else .tasks[0] | "created \(card_ref) [\(.lane)] \(.title)" + (if (.project // "") == "" then "" else "  {\(.project)}" end) end'
     ;;
   show)
     [[ $# -ge 1 ]] || die "show requires a task id"
@@ -402,8 +464,48 @@ case "$command_name" in
       fi
     done
     ;;
+  project)
+    dir="$PWD"
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --cwd) [[ $# -ge 2 ]] || die "--cwd requires a directory"; dir="$2"; shift 2 ;;
+        *) die "unknown project option '$1'" ;;
+      esac
+    done
+    project=$(resolve_project "$dir" "$(api GET /api/tasks)")
+    [[ -n "$project" ]] || die "no board project matches $dir; put a project name in a .todo-project file there to set one"
+    printf '%s\n' "$project"
+    ;;
+  stale)
+    days=7 json=false
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --days) [[ $# -ge 2 && "$2" =~ ^[0-9]+$ ]] || die "--days requires a whole number"; days="$2"; shift 2 ;;
+        --json) json=true; shift ;;
+        *) die "unknown stale option '$1'" ;;
+      esac
+    done
+    result=$(api GET /api/tasks | jq --argjson days "$days" "$JQ_TIME"'
+      {tasks: ([.tasks[] | select(.lane != "done") | . + {idleDays: idle_days} | select(.idleDays >= $days)] | sort_by(-.idleDays))}')
+    if $json; then printf '%s\n' "$result"; exit 0; fi
+    if [[ $(printf '%s' "$result" | jq '.tasks | length') -eq 0 ]]; then
+      printf 'No open cards idle %s+ days.\n' "$days"
+      exit 0
+    fi
+    printf '%s' "$result" | jq -r "$JQ_REFS"'
+      (["#","LANE","IDLE","KIND","PROJECT","TITLE"], (.tasks[] | [card_ref, .lane, "\(.idleDays)d", (.kind // "work"), (.project // ""), .title])) | @tsv' |
+      awk -F '\t' '{printf "%-6s  %-8s  %-5s  %-8s  %-18s  %s\n",$1,$2,$3,$4,$5,$6}'
+    ;;
   context)
-    api GET /api/tasks | jq -r --argjson budget 1900 --argjson reserve 500 "$JQ_REFS"'
+    dir="$PWD"
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --cwd) [[ $# -ge 2 ]] || die "--cwd requires a directory"; dir="$2"; shift 2 ;;
+        *) die "unknown context option '$1'" ;;
+      esac
+    done
+    api GET /api/tasks | jq -r --argjson budget 1900 --argjson reserve 500 --argjson idle 7 \
+      --arg explicit "$(explicit_project "$dir")" --argjson names "$(project_names "$dir")" "$JQ_REFS $JQ_TIME"'
       def is_active:
         ((.lane != "done" and .lane != "backlog")
           or (.lane == "done" and any(.subtasks[]?; .lane != "done"))
@@ -415,7 +517,8 @@ case "$command_name" in
         ("- [\($task.lane)] "
           + (if ($task.kind // "work") == "work" then "" else "[\($task.kind)] " end)
           + "\($task | card_ref)  \($task.title)"
-          + (if ($task.project // "") != "" then "  {\($task.project)}" else "" end))
+          + (if ($task.project // "") != "" then "  {\($task.project)}" else "" end)
+          + (($task | idle_days) as $days | if $days >= $idle then "  (idle \($days)d)" else "" end))
         + (if ($open | length) == 0 then ""
           else "\n" + (
             ([$open[0:3][] | "    - [ ] [\(.lane)] \(step_ref($task.number))  \(.title)"])
@@ -443,19 +546,33 @@ case "$command_name" in
             end
           end
         ) | .text;
-      [.tasks[] | select(is_active) | select(is_probe | not) | card_block] as $blocks |
+      def recent_first: sort_by(-(activity_epoch // 0));
+      pick_project($explicit; $names) as $project |
+      ($project | pkey) as $pk |
+      [.tasks[] | select(is_active) | select(is_probe | not)] as $active_cards |
+      ([$active_cards[] | select(is_mine($pk))] | recent_first) as $mine |
+      ([$active_cards[] | select(is_mine($pk) | not) | select(idle_days < $idle)] | recent_first) as $fresh |
+      ([$active_cards[] | select(is_mine($pk) | not) | select(idle_days >= $idle)] | length) as $idle_count |
+      [($mine + $fresh)[] | card_block] as $blocks |
+      (if $idle_count == 0 then ""
+        else "- \($idle_count) card\(if $idle_count == 1 then "" else "s" end) idle \($idle)+ days"
+          + (if $pk == "" then "" else " in other projects" end) + " (todo stale)"
+        end) as $idle_line |
+      (if $idle_line == "" then 0 else ($idle_line | utf8bytelength) + 1 end) as $idle_bytes |
       [.tasks[] | select(.lane != "done") | select(is_probe or (.lane == "backlog" and (is_active | not)))]
-        | sort_by(.updatedAt) | reverse | map(also_line) as $also |
+        | sort_by([(if is_mine($pk) then 0 else 1 end), -(activity_epoch // 0)]) | map(also_line) as $also |
       "Also open (backlog/probe):" as $also_header |
       (if ($also | length) == 0 then 0
         else ([(($also_header + "\n" + ($also | join("\n"))) | utf8bytelength) + 1, $reserve] | min)
         end) as $held |
-      (if ($blocks | length) == 0 then "## Task board: no active cards."
-        else "## Task board: update these instead of creating duplicates"
-          | fill($budget - $held; $blocks; "- +\(.) more active cards (todo ls)")
-        end) as $active |
-      if ($also | length) == 0 or ((($active + "\n" + $also_header) | utf8bytelength) + 1) > $budget then $active
-      else ($active + "\n" + $also_header) | fill($budget; $also; "- +\(.) more backlog/probe cards (todo ls --lane backlog, todo ls --kind probe)")
+      (if $project == "" then "## Task board" else "## Task board for {\($project)} (this directory)" end) as $title |
+      (if ($blocks | length) == 0 then $title + ": nothing active" + (if $idle_count > 0 then " recently." else "." end)
+        else ($title + ": update these instead of creating duplicates")
+          | fill($budget - $held - $idle_bytes; $blocks; "- +\(.) more active cards (todo ls)")
+        end
+        | if $idle_line == "" then . else . + "\n" + $idle_line end) as $active_text |
+      if ($also | length) == 0 or ((($active_text + "\n" + $also_header) | utf8bytelength) + 1) > $budget then $active_text
+      else ($active_text + "\n" + $also_header) | fill($budget; $also; "- +\(.) more backlog/probe cards (todo ls --lane backlog, todo ls --kind probe)")
       end'
     ;;
   help|-h|--help|"") usage ;;

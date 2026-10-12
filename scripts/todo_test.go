@@ -272,6 +272,12 @@ func TestCLIContextOmitsWholeMultibyteCardAtBudgetEdge(t *testing.T) {
 
 func runCLIContext(t *testing.T, tasks []store.Task) string {
 	t.Helper()
+	return runCLIIn(t, tasks, "", nil, "context")
+}
+
+// runCLIIn serves tasks read-only and runs todo from dir (the scripts directory when empty).
+func runCLIIn(t *testing.T, tasks []store.Task, dir string, env []string, args ...string) string {
+	t.Helper()
 	for _, tool := range []string{"bash", "curl", "jq"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skipf("CLI integration requires %s", tool)
@@ -289,11 +295,16 @@ func runCLIContext(t *testing.T, tasks []store.Task) string {
 	}))
 	t.Cleanup(api.Close)
 
-	cmd := exec.Command("bash", "./todo", "context")
-	cmd.Env = append(os.Environ(), "TODO_URL="+api.URL, "TODO_ACTOR=codex")
+	script, err := filepath.Abs("todo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", append([]string{script}, args...)...)
+	cmd.Dir = dir
+	cmd.Env = append(append(os.Environ(), "TODO_URL="+api.URL, "TODO_ACTOR=codex", "TODO_PROJECT="), env...)
 	data, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("todo context: %v\n%s", err, data)
+		t.Fatalf("todo %v: %v\n%s", args, err, data)
 	}
 	return string(data)
 }
@@ -443,7 +454,7 @@ func TestCLIAddAttachesToOpenCard(t *testing.T) {
 }
 
 func TestCLIContextListsBacklogAndProbeCards(t *testing.T) {
-	base := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	base := time.Now().UTC().Add(-5 * 24 * time.Hour)
 	var tasks []store.Task
 	for i := 0; i < 20; i++ {
 		tasks = append(tasks, store.Task{
