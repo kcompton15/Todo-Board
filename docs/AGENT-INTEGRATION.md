@@ -73,9 +73,7 @@ Close cards according to their kind:
 
 Do not delete cards created by another actor. A stopped board is never a reason to stop engineering work; report it once and continue.
 
-Codex should pass `--source codex`; Claude Code should pass `--source claude-code`.
-
-For attribution on **all** CLI mutations, use `TODO_ACTOR=codex todo ...` or `TODO_ACTOR=claude-code todo ...`. This non-secret label is independent of the task's creation source; `todo add --source` also provides the actor when `TODO_ACTOR` is unset. The session-start context includes active subtasks under Backlog cards and all unfinished subtasks under Done cards, so they don't drop out of view.
+Attribution is automatic. Inside a Codex shell (`CODEX_THREAD_ID` set) `todo` labels its changes and new cards' source `codex`; inside Claude Code (`CLAUDECODE=1`) it uses `claude-code`; anywhere else `cli`. `TODO_ACTOR` and `todo add --source` still override it. Agents should run `todo` plainly: an env prefix such as `TODO_ACTOR=... todo` keeps the command from matching a `Bash(todo:*)` permission rule. These labels are non-secret and identify the reporting client, not a verified person. The session-start context includes active subtasks under Backlog cards and all unfinished subtasks under Done cards, so they don't drop out of view.
 
 Use `todo history <id>` (or `--json`) to explain recent changes; omit ID for board-wide history. Labels identify the reporting client, not verified human identity. History keeps the latest 1,000 task changes, with bounded previews.
 

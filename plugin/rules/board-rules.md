@@ -28,9 +28,8 @@ effects; do not ask separately whether to perform them.
   notes); `followup` only when the conversation produces something the human must do; `probe`
   only when a question required real investigation and left artifacts worth finding again. Use
   `todo kind <N> <kind>` to correct a card's kind.
-- Use `--project` for the product or repository epic and `--tag` for work type. Claude Code passes
-  `--source claude-code` and prefixes mutations with `TODO_ACTOR=claude-code`; Codex uses `codex`
-  for both.
+- Use `--tag` for work type. `todo` labels its changes `claude-code` or `codex` on its own, so
+  run it plainly, with no `TODO_ACTOR=` prefix or `--source`.
 - Start Today or Backlog work with `todo start <N>`. Check subtasks as each actually finishes.
   Record blockers with `todo block <N> "reason"`.
 - Close the session's own `review` and `probe` cards when the deliverable is returned. Close

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -180,5 +181,46 @@ func TestCLIAddFilesUnderThisDirectorysProject(t *testing.T) {
 	}
 	if len(task.Subtasks) != 2 || task.Subtasks[0].Title != "-v flag" || task.Subtasks[1].Title != "--force" {
 		t.Fatalf("dash-leading steps = %+v", task.Subtasks)
+	}
+}
+
+func TestCLIDetectsTheCallingAgent(t *testing.T) {
+	for _, tool := range []string{"bash", "curl", "jq"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("CLI integration requires %s", tool)
+		}
+	}
+	s, err := store.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := httptest.NewServer(httpapi.New(s, httpapi.NewHub(), nil, nil).Handler())
+	defer api.Close()
+	cases := []struct {
+		env  []string
+		want string
+	}{
+		{[]string{"CODEX_THREAD_ID=t1", "CLAUDECODE="}, "codex"},
+		{[]string{"CODEX_THREAD_ID=", "CLAUDECODE=1"}, "claude-code"},
+		{[]string{"CODEX_THREAD_ID=", "CLAUDECODE="}, "cli"},
+		{[]string{"CODEX_THREAD_ID=", "CLAUDECODE=1", "TODO_ACTOR=reviewer"}, "reviewer"},
+	}
+	for i, c := range cases {
+		cmd := exec.Command("bash", "./todo", "add", "Card "+c.want)
+		cmd.Env = append(append(os.Environ(), "TODO_URL="+api.URL, "TODO_ACTOR=", "TODO_PROJECT="), c.env...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("todo add: %v\n%s", err, out)
+		}
+		task, _, err := s.Resolve(strconv.Itoa(i + 1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		records := s.History(store.HistoryFilter{TaskID: task.ID}).Records
+		if len(records) == 0 || records[0].Actor != c.want {
+			t.Fatalf("%v: history %+v; want actor %q", c.env, records, c.want)
+		}
+		if c.want != "reviewer" && task.Source != c.want {
+			t.Fatalf("%v: source %q; want %q", c.env, task.Source, c.want)
+		}
 	}
 }

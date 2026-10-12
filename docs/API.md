@@ -174,7 +174,7 @@ Every task includes a positive `revision`. Existing version 1 tasks without it l
 
 Each existing-task operation in `/api/ops` or an inbox envelope may include `"expectedRevision":3`. All preconditions compare to the transaction's starting snapshot, so multiple operations on one card use the same revision. Use per-operation preconditions, not `If-Match`, on batch routes.
 
-`X-Actor` identifies the client making an HTTP change (up to 80 characters, no control characters). Browser writes use `web`, CLI writes use `TODO_ACTOR` or `cli`, and MCP writes use `claude-chat`. Without that header, ordinary HTTP writes are labeled `api`; imports use `X-Source`/`cli`, batches use envelope `source`/`cli`. Inbox batches use envelope source or `inbox`. This is self-reported attribution, not authentication. Task `source` remains creation provenance and is not overwritten to record the latest actor.
+`X-Actor` identifies the client making an HTTP change (up to 80 characters, no control characters). Browser writes use `web`, CLI writes use `TODO_ACTOR`, else `codex` or `claude-code` when run from those agents' shells, else `cli`, and MCP writes use `claude-chat`. Without that header, ordinary HTTP writes are labeled `api`; imports use `X-Source`/`cli`, batches use envelope `source`/`cli`. Inbox batches use envelope source or `inbox`. This is self-reported attribution, not authentication. Task `source` remains creation provenance and is not overwritten to record the latest actor.
 
 ## Activity
 

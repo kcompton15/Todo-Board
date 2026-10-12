@@ -2,6 +2,11 @@
 set -euo pipefail
 
 TODO_URL="${TODO_URL:-http://127.0.0.1:7337}"
+# Codex shells carry CODEX_THREAD_ID and Claude Code shells CLAUDECODE=1, so agents need no TODO_ACTOR prefix.
+if [[ -n "${CODEX_THREAD_ID:-}" ]]; then default_actor=codex
+elif [[ "${CLAUDECODE:-}" == 1 ]]; then default_actor=claude-code
+else default_actor=cli
+fi
 
 die() { printf 'todo: %s\n' "$*" >&2; exit 1; }
 down() { printf 'todo: board unreachable at %s (is the container running?)\n' "$TODO_URL" >&2; exit 3; }
@@ -13,7 +18,7 @@ api() {
   local method="$1" path="$2" body="${3:-}" content_type="${4:-application/json}" revision="${5:-}"
   local response_file status
   response_file=$(mktemp "${TMPDIR:-/tmp}/todo-board.XXXXXX")
-  local args=(-H "X-Actor: ${TODO_ACTOR:-cli}" -sS --max-time 10 -o "$response_file" -w '%{http_code}' -X "$method" "$TODO_URL$path")
+  local args=(-H "X-Actor: ${TODO_ACTOR:-$default_actor}" -sS --max-time 10 -o "$response_file" -w '%{http_code}' -X "$method" "$TODO_URL$path")
   [[ -z "$revision" ]] || args+=(-H "If-Match: $revision")
   if [[ -n "$body" ]]; then
     args+=(-H "Content-Type: $content_type" --data-binary "$body")
@@ -225,7 +230,9 @@ todo add also accepts [--link KEY_OR_URL]... [--agent-context TEXT] [--new]
 <card> is a number (142 or '#142') or a task ID prefix.
 <step> is a step number (3 or '#142.3') or a subtask ID prefix.
 
-Environment: TODO_URL (default http://127.0.0.1:7337), TODO_ACTOR (default cli),
+Environment: TODO_URL (default http://127.0.0.1:7337), TODO_ACTOR (default codex or
+  claude-code inside those agents' shells, otherwise cli; todo add --source also sets it),
+  TODO_PROJECT (overrides this directory's project),
   TODO_REPORT_TIMEOUT (seconds todo report waits, default 180)
 EOF
 }
@@ -272,7 +279,7 @@ case "$command_name" in
     ;;
   add)
     [[ $# -ge 1 ]] || die "add requires a title"
-    title="$1"; shift; lane=""; kind="work"; priority=2; project=""; project_given=false; tag=""; notes=""; source="cli"; subs=(); links='[]'; memo=""; on_match="attach"
+    title="$1"; shift; lane=""; kind="work"; priority=2; project=""; project_given=false; tag=""; notes=""; source="$default_actor"; subs=(); links='[]'; memo=""; on_match="attach"
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --new) on_match="create"; shift ;;
