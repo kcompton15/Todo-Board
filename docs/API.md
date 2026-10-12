@@ -118,7 +118,44 @@ Work logs and full task change records are authoritative durable journal data. `
 
 ## Report preview
 
-`POST /api/reports/preview` accepts `{"kind":"standup|weekly","start":"YYYY-MM-DD","end":"YYYY-MM-DD","projects":["optional project"]}` and returns evidence-based Markdown, source record IDs, and `partialLegacyHistory`. Dates are inclusive Chicago calendar dates, including daylight-saving transitions. The preview never fabricates a model result; it includes recorded work-log evidence and, for weekly output, unresolved current blockers as explicitly labeled carry-forward context.
+`POST /api/reports/preview` accepts `{"kind":"standup|weekly","start":"YYYY-MM-DD","end":"YYYY-MM-DD","projects":["optional project"]}` and returns `{"kind","start","end","markdown","sourceRecordIds","partialLegacyHistory"}`. Dates are inclusive Chicago calendar dates, including daylight-saving transitions. The preview makes no model call. Its Markdown is a grouped evidence digest: one heading per project, one line per card (`- #N Title (done)`) with at most three short sub-bullets, then Blockers, Next steps and, for weekly reports, cards still in flight.
+
+The digest is built from an evidence packet with these rules:
+
+- Probe cards are left out. A card appears only when the window holds a fact for it: a work-log entry, a checked step, or a move to `done`. Rank, tag and other edits alone do not count.
+- Reconciler text is cleaned first. Multi-line entries are split. `observed <ref> <state>` lines and `merged <ref>; merged <ref>` lines collapse into one fact per ref with its latest state (`web!140 merged`). `discovered reference: ...` lines are dropped, as are exact duplicate lines on the same card.
+- Each entry is capped at 500 characters. If the packet passes 96 KiB, the oldest progress notes are dropped first and the packet is marked `truncated`.
+- Blockers are unresolved blocker entries from any date on cards that are not done (the digest shows the latest per card). Weekly packets also list `activeCards`: cards in `doing` or `blocked` with no evidence in the window.
+
+## Report jobs
+
+Report jobs let the board and CLI hand an evidence packet to a host worker that writes the report, then poll for the result. Jobs live in memory only: a service restart drops them, and they never touch `tasks.json` or publish SSE updates.
+
+- `POST /api/reports/jobs` takes the same body as the preview, snapshots the evidence and digest, and returns `202` with the job.
+- `GET /api/reports/jobs/{id}` returns the job, or `404` once it is gone.
+- `POST /api/reports/jobs/claim` moves the oldest queued job to `running` with a five-minute lease and returns the job plus its `evidence` packet. It returns `204` when nothing is queued. Every call records the worker as polling.
+- `POST /api/reports/jobs/{id}/complete` takes `{"markdown":"...","cardCount":3}` (`cardCount` optional, markdown up to 32 KiB) and marks the job `done`.
+- `POST /api/reports/jobs/{id}/fail` takes `{"error":"..."}` and marks the job `failed`; text past 500 characters is cut off.
+- `GET /api/reports/worker` returns `{"lastClaimAt":"RFC3339"}`, or `{"lastClaimAt":null}` when no worker has polled since the service started. The board dialog and `todo report` treat the worker as missing when this is null or older than 30 seconds and show the digest instead of queueing a job.
+
+Job shape:
+
+```json
+{
+  "id": "r1f2e3d4c5b6a7980",
+  "kind": "weekly",
+  "start": "2026-10-05",
+  "end": "2026-10-11",
+  "state": "queued",
+  "markdown": "",
+  "digestMarkdown": "# Weekly report (2026-10-05 through 2026-10-11)\n...",
+  "cardCount": 28,
+  "createdAt": "2026-10-12T15:00:00Z",
+  "updatedAt": "2026-10-12T15:00:00Z"
+}
+```
+
+`state` is `queued`, `running`, `done` or `failed`; failed jobs carry `error`. Complete and fail return `409` unless the job is `running`. An expired lease puts the job back in the queue once; a second expiry fails it. At most 50 jobs are kept: finished jobs are dropped after an hour, or sooner (oldest first) to make room, and creating a job while 50 are still queued or running returns `429`.
 
 ## Completion safeguards
 

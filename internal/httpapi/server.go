@@ -23,13 +23,14 @@ type Server struct {
 	hub       *Hub
 	logger    *slog.Logger
 	indexHTML []byte
+	reports   *reportQueue
 }
 
 func New(taskStore *store.Store, hub *Hub, logger *slog.Logger, indexHTML []byte) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Server{store: taskStore, hub: hub, logger: logger, indexHTML: indexHTML}
+	return &Server{store: taskStore, hub: hub, logger: logger, indexHTML: indexHTML, reports: newReportQueue()}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -40,6 +41,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/tasks/{id}/history", s.withRefs(s.listTaskHistory))
 	mux.HandleFunc("POST /api/tasks/{id}/work-log", s.withRefs(s.addWorkLog))
 	mux.HandleFunc("POST /api/reports/preview", s.previewReport)
+	mux.HandleFunc("POST /api/reports/jobs", s.createReportJob)
+	mux.HandleFunc("POST /api/reports/jobs/claim", s.claimReportJob)
+	mux.HandleFunc("GET /api/reports/jobs/{id}", s.getReportJob)
+	mux.HandleFunc("POST /api/reports/jobs/{id}/complete", s.completeReportJob)
+	mux.HandleFunc("POST /api/reports/jobs/{id}/fail", s.failReportJob)
+	mux.HandleFunc("GET /api/reports/worker", s.reportWorker)
 	mux.HandleFunc("GET /api/tasks", s.listTasks)
 	mux.HandleFunc("POST /api/tasks", s.createTasks)
 	mux.HandleFunc("GET /api/tasks/{id}", s.withRefs(s.getTask))

@@ -113,7 +113,7 @@ func TestPreviewReportUsesRecordedEvidenceAndCarryForward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(report.Markdown, "implemented durable history") || !strings.Contains(report.Markdown, "Current carry-forward context") || !strings.Contains(report.Markdown, "waiting for a decision") {
+	if !strings.Contains(report.Markdown, "implemented durable history") || !strings.Contains(report.Markdown, "## Blockers") || !strings.Contains(report.Markdown, "waiting for a decision") {
 		t.Fatalf("unexpected report: %s", report.Markdown)
 	}
 }

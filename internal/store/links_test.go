@@ -317,7 +317,7 @@ func TestLinkCacheCapAndReceiptReport(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw, _ := json.Marshal(report)
-	if !strings.Contains(string(raw), "Delivered final findings") || !strings.Contains(string(raw), "Progress") {
+	if !strings.Contains(string(raw), "Delivered final findings") || !strings.Contains(string(raw), "#1 review") {
 		t.Fatal(string(raw))
 	}
 }
