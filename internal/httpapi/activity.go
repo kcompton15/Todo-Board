@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"unicode"
@@ -13,6 +14,10 @@ import (
 func mutationHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			if crossSite(r) {
+				writeError(w, http.StatusForbidden, "cross-site writes are not allowed")
+				return
+			}
 			actor := strings.TrimSpace(r.Header.Get("X-Actor"))
 			if utf8.RuneCountInString(actor) > 80 || strings.IndexFunc(actor, unicode.IsControl) >= 0 {
 				writeError(w, http.StatusBadRequest, "X-Actor must be at most 80 characters without control characters")
@@ -33,6 +38,20 @@ func mutationHeaders(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// crossSite reports browser requests from another site; non-browser clients send neither header.
+func crossSite(r *http.Request) bool {
+	switch r.Header.Get("Sec-Fetch-Site") {
+	case "cross-site", "same-site":
+		return true
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return false
+	}
+	parsed, err := url.Parse(origin)
+	return err != nil || parsed.Host != r.Host
 }
 
 func mutation(r *http.Request, fallback ...string) store.Mutation {
