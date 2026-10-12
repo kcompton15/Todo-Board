@@ -49,3 +49,24 @@ func TestCrossSiteWritesRejected(t *testing.T) {
 		})
 	}
 }
+
+func TestLoopbackHostsOnly(t *testing.T) {
+	handler := LoopbackHosts(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	for host, want := range map[string]int{
+		"127.0.0.1:7337":        http.StatusNoContent,
+		"localhost:7337":        http.StatusNoContent,
+		"LOCALHOST":             http.StatusNoContent,
+		"[::1]:7337":            http.StatusNoContent,
+		"evil.example:7337":     http.StatusForbidden,
+		"127.0.0.1.nip.io:7337": http.StatusForbidden,
+		"":                      http.StatusForbidden,
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/api/tasks", nil)
+		req.Host = host
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if w.Code != want {
+			t.Fatalf("host %q: got %d want %d", host, w.Code, want)
+		}
+	}
+}

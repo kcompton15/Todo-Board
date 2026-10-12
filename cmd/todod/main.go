@@ -66,7 +66,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           api.Handler(),
+		Handler:           httpapi.LoopbackHosts(api.Handler()),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      0,

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -37,6 +38,22 @@ func mutationHeaders(next http.Handler) http.Handler {
 			}
 		}
 		next.ServeHTTP(w, r)
+	})
+}
+
+// LoopbackHosts rejects requests whose Host is not a loopback name, so a rebound DNS name cannot reach the board.
+func LoopbackHosts(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.Host)
+		if err != nil {
+			host = strings.Trim(r.Host, "[]")
+		}
+		switch strings.ToLower(host) {
+		case "localhost", "127.0.0.1", "::1":
+			next.ServeHTTP(w, r)
+		default:
+			writeError(w, http.StatusForbidden, "the board only answers to localhost, 127.0.0.1 or [::1]")
+		}
 	})
 }
 
