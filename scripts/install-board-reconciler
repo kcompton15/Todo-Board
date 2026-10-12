@@ -191,8 +191,8 @@ preflight() {
     die "Jira token for $jira_email not found in the login Keychain (service atlassian-api-token)"
   if [[ "$with_model" == true ]]; then
     need claude
-    [[ "$(claude --version)" == "2.1.285 (Claude Code)" ]] ||
-      die "model assistance is verified only for Claude Code 2.1.285; install without --with-model"
+    [[ "$(claude --version)" == "2.1.296 (Claude Code)" ]] ||
+      die "model assistance is verified only for Claude Code 2.1.296; install without --with-model"
     path_value="$(dirname "$(command -v claude)"):$path_value"
   fi
 }

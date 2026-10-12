@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+die() {
+  printf 'install-todo-reporter: %s\n' "$*" >&2
+  exit 1
+}
+
+usage() {
+  die "usage: scripts/install-todo-reporter --enable | --disable | --uninstall  [--label L]"
+}
+
+need() {
+  command -v "$1" >/dev/null 2>&1 || die "required command '$1' is not installed"
+}
+
+xml_escape() {
+  local value=$1
+  value=${value//&/&amp;}
+  value=${value//</&lt;}
+  value=${value//>/&gt;}
+  value=${value//\"/&quot;}
+  value=${value//\'/&apos;}
+  printf '%s' "$value"
+}
+
+mode=""
+label="${TODO_REPORTER_LABEL:-io.github.kcompton15.todo-reporter}"
+while (($#)); do
+  case "$1" in
+    --enable | --disable | --uninstall)
+      [[ -z "$mode" ]] || usage
+      mode=${1#--}
+      ;;
+    --label)
+      (($# >= 2)) || usage
+      label=$2
+      shift
+      ;;
+    *) usage ;;
+  esac
+  shift
+done
+[[ -n "$mode" ]] || usage
+[[ "$label" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*\.todo-reporter$ ]] || die "--label must be a reverse-DNS name ending in .todo-reporter"
+
+for command in curl launchctl plutil; do
+  need "$command"
+done
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+source_bin="${TODO_REPORTER_SOURCE:-$script_dir/../bin/todo-reporter}"
+domain="gui/$(id -u)"
+service="$domain/$label"
+launch_agents="$HOME/Library/LaunchAgents"
+plist="$launch_agents/$label.plist"
+bin_dir="$HOME/.local/bin"
+bin="$bin_dir/todo-reporter"
+state_dir="$HOME/.local/state/todo-board"
+work_dir="$state_dir/todo-reporter-run"
+log_dir="$HOME/.local/log"
+log_file="$log_dir/todo-reporter.log"
+todo_url="${TODO_URL:-http://127.0.0.1:7337}"
+todo_url="${todo_url%/}"
+path_value="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+[[ "$todo_url" =~ ^http://(127\.0\.0\.1|localhost)(:[0-9]+)?$ ]] || die "TODO_URL must be a loopback http origin"
+
+for other in "$launch_agents"/*.todo-reporter.plist; do
+  [[ -e "$other" && "$other" != "$plist" ]] || continue
+  die "another reporter agent is installed at $other; pass --label $(basename "$other" .plist) to manage that one"
+done
+
+if [[ "$mode" == uninstall ]]; then
+  if launchctl print "$service" >/dev/null 2>&1; then
+    launchctl bootout "$service"
+  fi
+  rm -f -- "$plist" "$bin"
+  printf 'removed %s and %s (logs kept in %s)\n' "$label" "$bin" "$log_file"
+  exit 0
+fi
+
+preflight() {
+  local status claude_bin
+  status=$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' "$todo_url/api/reports/worker") ||
+    die "board unreachable at $todo_url"
+  [[ "$status" == 200 ]] || die "board returned HTTP $status for /api/reports/worker; rebuild the board container"
+  need claude
+  claude_bin=$(command -v claude)
+  [[ "$claude_bin" == /* ]] || die "claude must resolve to an absolute path"
+  [[ ":$path_value:" == *":$(dirname "$claude_bin"):"* ]] || path_value="$(dirname "$claude_bin"):$path_value"
+}
+
+write_plist() {
+  local target=$1 program_arguments="" argument
+  shift
+  for argument in "$@"; do
+    program_arguments+="    <string>$(xml_escape "$argument")</string>"$'\n'
+  done
+  cat >"$target" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$(xml_escape "$label")</string>
+  <key>ProgramArguments</key>
+  <array>
+$program_arguments  </array>
+  <key>WorkingDirectory</key><string>$(xml_escape "$work_dir")</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>$(xml_escape "$path_value")</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>StandardOutPath</key><string>$(xml_escape "$log_file")</string>
+  <key>StandardErrorPath</key><string>$(xml_escape "$log_file")</string>
+</dict>
+</plist>
+EOF
+  plutil -lint "$target" >/dev/null || die "generated plist failed plutil -lint"
+}
+
+[[ -x "$source_bin" ]] || die "build first (make build-reporter); $source_bin is not executable"
+preflight
+mkdir -p "$launch_agents" "$bin_dir" "$log_dir" "$work_dir"
+chmod 0700 "$state_dir" "$work_dir"
+
+backup_dir=$(mktemp -d "$state_dir/install-backup.XXXXXX")
+had_bin=false had_plist=false was_loaded=false
+[[ -e "$bin" ]] && cp -p "$bin" "$backup_dir/bin" && had_bin=true
+[[ -e "$plist" ]] && cp -p "$plist" "$backup_dir/plist" && had_plist=true
+launchctl print "$service" >/dev/null 2>&1 && was_loaded=true
+
+restore() {
+  printf 'install-todo-reporter: %s; restoring the previous installation\n' "$1" >&2
+  if launchctl print "$service" >/dev/null 2>&1; then
+    launchctl bootout "$service" || printf 'install-todo-reporter: bootout during restore failed\n' >&2
+  fi
+  if [[ "$had_bin" == true ]]; then cp -p "$backup_dir/bin" "$bin"; else rm -f "$bin"; fi
+  if [[ "$had_plist" == true ]]; then cp -p "$backup_dir/plist" "$plist"; else rm -f "$plist"; fi
+  if [[ "$was_loaded" == true && "$had_plist" == true ]]; then
+    launchctl enable "$service" || printf 'install-todo-reporter: could not re-enable previous agent\n' >&2
+    launchctl bootstrap "$domain" "$plist" || printf 'install-todo-reporter: could not reload previous agent\n' >&2
+  fi
+  exit 1
+}
+
+temporary_plist=$(mktemp "$launch_agents/.todo-reporter.XXXXXX")
+temporary_bin=$(mktemp "$bin_dir/.todo-reporter.XXXXXX")
+trap 'rm -f "$temporary_plist" "$temporary_bin"' EXIT
+write_plist "$temporary_plist" "$bin" --url "$todo_url"
+cp "$source_bin" "$temporary_bin"
+chmod 0755 "$temporary_bin"
+
+if [[ "$was_loaded" == true ]]; then
+  launchctl bootout "$service" || restore "bootout of the running agent failed"
+fi
+chmod 0644 "$temporary_plist"
+mv -f "$temporary_bin" "$bin"
+mv -f "$temporary_plist" "$plist"
+
+if [[ "$mode" == disable ]]; then
+  launchctl disable "$service" || restore "launchctl disable failed"
+  launchctl print-disabled "$domain" | grep -q "\"$label\" => disabled" || restore "disable read-back failed"
+  if launchctl print "$service" >/dev/null 2>&1; then restore "agent is still loaded"; fi
+  rm -rf "$backup_dir"
+  printf 'installed %s (disabled, not loaded)\nplist: %s\nprogram: %s\n' "$label" "$plist" "$bin"
+  exit 0
+fi
+
+launchctl enable "$service" || restore "launchctl enable failed"
+launchctl bootstrap "$domain" "$plist" || restore "launchctl bootstrap failed"
+readback=$(launchctl print "$service" 2>/dev/null) || restore "agent missing after bootstrap"
+grep -qF "program = $bin" <<<"$readback" || restore "read-back program path differs"
+rm -rf "$backup_dir"
+printf 'installed %s (enabled, kept alive)\nplist: %s\nprogram: %s\nlog: %s\n' "$label" "$plist" "$bin" "$log_file"

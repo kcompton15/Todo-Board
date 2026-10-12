@@ -1,4 +1,4 @@
-.PHONY: run test validate build build-mcp build-reconciler build-darwin install-claude-desktop setup doctor uninstall up down logs
+.PHONY: run test validate build build-mcp build-reconciler build-reporter build-darwin install-claude-desktop setup doctor uninstall up down logs
 
 run:
 	go run ./cmd/todod
@@ -17,6 +17,7 @@ validate: test
 	bash -n scripts/board-notifier
 	bash -n scripts/install-board-notifier
 	bash -n scripts/install-board-reconciler
+	bash -n scripts/install-todo-reporter
 	bash -n scripts/install-claude-desktop-mcp
 	bash -n scripts/install-codex-integration
 	bash -n scripts/team-setup
@@ -36,6 +37,10 @@ build-mcp:
 build-reconciler:
 	mkdir -p bin
 	CGO_ENABLED=0 go build -trimpath -o bin/board-reconciler ./cmd/board-reconciler
+
+build-reporter:
+	mkdir -p bin
+	CGO_ENABLED=0 go build -trimpath -o bin/todo-reporter ./cmd/todo-reporter
 
 GO_IMAGE := golang:1.27.1-alpine3.24
 DARWIN_ARCH := $(if $(filter x86_64,$(shell uname -m)),amd64,arm64)

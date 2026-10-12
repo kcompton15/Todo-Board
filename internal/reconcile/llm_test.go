@@ -52,7 +52,7 @@ func TestClaudeIsolationAndFailure(t *testing.T) {
 			}
 		}
 		if len(c.Args) == 1 && c.Args[0] == "--version" {
-			return []byte("2.1.285 (Claude Code)"), nil
+			return []byte("2.1.296 (Claude Code)"), nil
 		}
 		if len(c.Args) == 1 && c.Args[0] == "--help" {
 			return []byte("--safe-mode --max-budget-usd --json-schema --strict-mcp-config --debug-file"), nil
