@@ -33,13 +33,13 @@ func TestActivityAtIgnoresReordersAndLinkRefreshes(t *testing.T) {
 	}
 	unchanged("reorder")
 
-	if _, _, err := s.LinkTask(id, LinkInput{Ref: "ANEW-1"}, Mutation{Actor: reconcilerActor}); err != nil {
+	if _, _, err := s.LinkTask(id, LinkInput{Ref: "team/api!1"}, Mutation{Actor: reconcilerActor}); err != nil {
 		t.Fatal(err)
 	}
 	unchanged("reconciler link discovery")
 
-	state, category := "In Progress", "indeterminate"
-	if _, _, err := s.LinkTask(id, LinkInput{Ref: "ANEW-1", State: &state, StateCategory: &category}, Mutation{Actor: "cli"}); err != nil {
+	state := "opened"
+	if _, _, err := s.LinkTask(id, LinkInput{Ref: "team/api!1", State: &state}, Mutation{Actor: "cli"}); err != nil {
 		t.Fatal(err)
 	}
 	unchanged("link status refresh")

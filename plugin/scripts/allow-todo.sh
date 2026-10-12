@@ -19,5 +19,5 @@ case "$subcommand" in
   *) exit 0 ;;
 esac
 jq -n '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "allow",
-  permissionDecisionReason: "plain todo board command (anew-board plugin)"}}'
+  permissionDecisionReason: "plain todo board command (todo-board plugin)"}}'
 exit 0
