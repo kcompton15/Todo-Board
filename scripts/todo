@@ -35,6 +35,12 @@ api() {
 
 encode() { jq -rn --arg value "$1" '$value|@uri'; }
 
+# JSON array of the arguments; read from stdin so values starting with '-' are never jq options.
+json_args() {
+  [[ $# -gt 0 ]] || { printf '[]'; return; }
+  printf '%s\0' "$@" | jq -cRs 'split("\u0000") | .[:-1]'
+}
+
 # jq helpers: card and step handles fall back to IDs for servers without numbers.
 JQ_REFS='def card_ref: if (.number // 0) > 0 then "#\(.number)" else .id end;
   def step_ref($card): if (.number // 0) > 0 and ($card // 0) > 0 then "#\($card).\(.number)" else .id end;'
@@ -137,7 +143,7 @@ project_names() {
     d=$(dirname "$d")
   done
   [[ -z "$origin" ]] || names+=("$origin")
-  jq -cn '$ARGS.positional' --args ${names[@]+"${names[@]}"}
+  json_args ${names[@]+"${names[@]}"}
 }
 
 # Prints the board project for a directory, or nothing. Never invents a name the board lacks.
@@ -285,10 +291,13 @@ case "$command_name" in
     done
     sub_json='[]'
     if [[ ${#subs[@]} -gt 0 ]]; then
-      sub_json=$(jq -n --args '$ARGS.positional' "${subs[@]}")
+      sub_json=$(json_args "${subs[@]}")
     fi
     [[ -n "${TODO_ACTOR:-}" ]] || TODO_ACTOR="$source"
-    $project_given || project=$(resolve_project "$PWD" "$(api GET /api/tasks)")
+    if ! $project_given && ! project=$(resolve_project "$PWD" "$(api GET /api/tasks)"); then
+      printf 'todo: could not work out this directory'"'"'s project; filing without one\n' >&2
+      project=""
+    fi
     body=$(jq -n --arg title "$title" --arg lane "$lane" --arg kind "$kind" --argjson priority "$priority" --arg project "$project" --arg tag "$tag" --arg notes "$notes" --arg source "$source" --argjson subtasks "$sub_json" '{title:$title,lane:$lane,kind:$kind,priority:$priority,project:$project,tag:$tag,notes:$notes,source:$source,subtasks:$subtasks}')
     body=$(printf '%s' "$body" | jq --argjson links "$links" --arg memo "$memo" '.+{links:$links,agentContext:$memo} | if .lane=="" then del(.lane) else . end')
     api POST "/api/tasks?onMatch=$on_match" "$body" | jq -r "$JQ_REFS"'

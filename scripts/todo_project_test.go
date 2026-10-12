@@ -53,6 +53,7 @@ func TestCLIProjectResolution(t *testing.T) {
 		{mkdir(t, root, "web-app-worktrees", "m18"), nil, "web-app"},
 		{mkdir(t, root, "api", "cmd"), []string{"TODO_PROJECT=Mobile"}, "Mobile"},
 		{mkdir(t, root, "pinned", "deep"), nil, "Brand New"},
+		{mkdir(t, root, "-dash-leading", "crm"), nil, "CRM"},
 	}
 	if err := os.WriteFile(filepath.Join(root, "pinned", ".todo-project"), []byte("  Brand New \n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -168,5 +169,16 @@ func TestCLIAddFilesUnderThisDirectorysProject(t *testing.T) {
 	}
 	if got := run(apiDir, "add", "Opted out", "--project", ""); got != "created #5 [backlog] Opted out" {
 		t.Fatalf("add with an empty --project: %s", got)
+	}
+	dashed := mkdir(t, root, "-dash-leading", "crm")
+	if got := run(dashed, "add", "Dashed", "--sub", "-v flag", "--sub", "--force"); got != "created #6 [backlog] Dashed  {CRM}" {
+		t.Fatalf("add under a dash-leading directory: %s", got)
+	}
+	task, _, err := s.Resolve("6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(task.Subtasks) != 2 || task.Subtasks[0].Title != "-v flag" || task.Subtasks[1].Title != "--force" {
+		t.Fatalf("dash-leading steps = %+v", task.Subtasks)
 	}
 }
