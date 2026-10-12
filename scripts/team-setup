@@ -250,14 +250,14 @@ fi
 
 printf '\nDone%s.\n' "$([[ "$dry_run" == true ]] && echo ' (dry run, nothing changed)')"
 say "  Board:  $TODO_URL"
-if [[ "$path_ok" == false ]]; then
+path_line='export PATH="$HOME/.local/bin:$PATH"'
+if [[ "$path_ok" == false ]] && grep -qxF "$path_line" "$HOME/.zshrc" 2>/dev/null; then
+  say "  PATH:   ~/.zshrc already adds ~/.local/bin; open a new terminal"
+elif [[ "$path_ok" == false ]]; then
   if [[ "$add_to_path" == false && "$interactive" == true && "$dry_run" == false ]]; then
     [[ "$(ask "Add ~/.local/bin to your PATH in ~/.zshrc so 'todo' works in new terminals? [Y/n] ")" =~ ^[Nn] ]] || add_to_path=true
   fi
-  path_line='export PATH="$HOME/.local/bin:$PATH"'
-  if [[ "$add_to_path" == true ]] && grep -qxF "$path_line" "$HOME/.zshrc" 2>/dev/null; then
-    say "  PATH:   ~/.zshrc already adds ~/.local/bin; open a new terminal"
-  elif [[ "$add_to_path" == true ]]; then
+  if [[ "$add_to_path" == true ]]; then
     if [[ "$dry_run" == true ]]; then
       say "  PATH:   would add ~/.local/bin to ~/.zshrc"
     else
